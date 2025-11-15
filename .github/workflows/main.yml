@@ -46,7 +46,7 @@ jobs:
           cd luau-build
           mkdir build-release
           cd build-release
-          cmake .. -DCMAKE_BUILD_TYPE=Release -A x64
+          cmake .. -DCMAKE_BUILD_TYPE=Release -A x64 -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release
           
       - name: Setup LLVM strip
@@ -113,7 +113,7 @@ jobs:
           cd luau-build
           mkdir build-release
           cd build-release
-          cmake .. -DCMAKE_BUILD_TYPE=Release
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(nproc)
           
       - name: Collect Linux Libraries
@@ -172,7 +172,7 @@ jobs:
           cd luau-build
           mkdir build-release-${{ matrix.arch }}
           cd build-release-${{ matrix.arch }}
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
           
       - name: Collect macOS Libraries
@@ -236,7 +236,8 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=${{ matrix.abi }} \
             -DANDROID_PLATFORM=android-21 \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(nproc)
           
       - name: Collect Android Libraries
@@ -309,7 +310,8 @@ jobs:
             -DCMAKE_SYSTEM_NAME=iOS \
             -DCMAKE_OSX_SYSROOT=${{ matrix.sdk }} \
             -DCMAKE_OSX_ARCHITECTURES=$ARCH \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
           
       - name: Collect iOS Libraries
