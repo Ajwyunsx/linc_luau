@@ -208,7 +208,6 @@ extern class LuaL {
     @:native('luaL_openlibs')
     static function openlibs(l:State) : Void;
 
-    // Luau compile+load helper: compiles source and loads chunk into VM
     @:native('linc::luau::load_source')
     static function luau_loadsource(l:State, chunkname:String, source:String) : Int;
 
