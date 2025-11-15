@@ -1,0 +1,290 @@
+name: Build & Update Luau Libraries
+
+on:
+  schedule:
+    # Run daily at 00:00 UTC to check for updates
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    paths:
+      - '.github/workflows/build-libraries.yml'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Clone Luau repository
+        run: |
+          git clone https://github.com/luau-lang/luau.git luau-build
+          cd luau-build
+          git log -1 --oneline
+
+      - name: Setup MSVC
+        uses: microsoft/setup-msbuild@v1.1
+
+      - name: Build Luau (Windows x64)
+        run: |
+          cd luau-build
+          mkdir build-release
+          cd build-release
+          cmake .. -DCMAKE_BUILD_TYPE=Release -A x64
+          cmake --build . --config Release
+          
+      - name: Collect Windows Libraries
+        run: |
+          mkdir -p artifacts/windows-x64/lib
+          Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/
+          Copy-Item luau-build/build-release/Release/*.dll artifacts/windows-x64/lib/ -ErrorAction SilentlyContinue
+          
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-libs
+          path: artifacts/windows-x64/
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone Luau repository
+        run: |
+          git clone https://github.com/luau-lang/luau.git luau-build
+          cd luau-build
+          git log -1 --oneline
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake
+
+      - name: Build Luau (Linux x64)
+        run: |
+          cd luau-build
+          mkdir build-release
+          cd build-release
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          cmake --build . --config Release -j$(nproc)
+          
+      - name: Collect Linux Libraries
+        run: |
+          mkdir -p artifacts/linux-x64/lib
+          find luau-build/build-release -name "*.a" -exec cp {} artifacts/linux-x64/lib/ \;
+          find luau-build/build-release -name "*.so" -exec cp {} artifacts/linux-x64/lib/ \; 2>/dev/null || true
+          
+      - name: Upload Linux Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64-libs
+          path: artifacts/linux-x64/
+
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [x86_64, arm64]
+    steps:
+      - name: Clone Luau repository
+        run: |
+          git clone https://github.com/luau-lang/luau.git luau-build
+          cd luau-build
+          git log -1 --oneline
+
+      - name: Install dependencies
+        run: |
+          brew install cmake
+
+      - name: Build Luau (macOS ${{ matrix.arch }})
+        run: |
+          cd luau-build
+          mkdir build-release-${{ matrix.arch }}
+          cd build-release-${{ matrix.arch }}
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
+          cmake --build . --config Release -j$(sysctl -n hw.ncpu)
+          
+      - name: Collect macOS Libraries
+        run: |
+          mkdir -p artifacts/macos-${{ matrix.arch }}/lib
+          find luau-build/build-release-${{ matrix.arch }} -name "*.a" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \;
+          find luau-build/build-release-${{ matrix.arch }} -name "*.dylib" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \; 2>/dev/null || true
+          
+      - name: Upload macOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}-libs
+          path: artifacts/macos-${{ matrix.arch }}/
+
+  build-android:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        abi: [armeabi-v7a, arm64-v8a, x86, x86_64]
+    steps:
+      - name: Clone Luau repository
+        run: |
+          git clone https://github.com/luau-lang/luau.git luau-build
+          cd luau-build
+          git log -1 --oneline
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r25c
+
+      - name: Build Luau (Android ${{ matrix.abi }})
+        run: |
+          cd luau-build
+          mkdir build-android-${{ matrix.abi }}
+          cd build-android-${{ matrix.abi }}
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=${{ matrix.abi }} \
+            -DANDROID_PLATFORM=android-21 \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build . --config Release -j$(nproc)
+          
+      - name: Collect Android Libraries
+        run: |
+          mkdir -p artifacts/android-${{ matrix.abi }}/lib
+          find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \;
+          find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \; 2>/dev/null || true
+          
+      - name: Upload Android Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ matrix.abi }}-libs
+          path: artifacts/android-${{ matrix.abi }}/
+
+  build-ios:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        sdk: [iphoneos, iphonesimulator]
+    steps:
+      - name: Clone Luau repository
+        run: |
+          git clone https://github.com/luau-lang/luau.git luau-build
+          cd luau-build
+          git log -1 --oneline
+
+      - name: Build Luau (iOS ${{ matrix.sdk }})
+        run: |
+          cd luau-build
+          mkdir build-ios-${{ matrix.sdk }}
+          cd build-ios-${{ matrix.sdk }}
+          
+          if [ "${{ matrix.sdk }}" = "iphoneos" ]; then
+            ARCH="arm64"
+          else
+            ARCH="x86_64"
+          fi
+          
+          cmake .. \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=${{ matrix.sdk }} \
+            -DCMAKE_OSX_ARCHITECTURES=$ARCH \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build . --config Release -j$(sysctl -n hw.ncpu)
+          
+      - name: Collect iOS Libraries
+        run: |
+          mkdir -p artifacts/ios-${{ matrix.sdk }}/lib
+          find luau-build/build-ios-${{ matrix.sdk }} -name "*.a" -exec cp {} artifacts/ios-${{ matrix.sdk }}/lib/ \;
+          
+      - name: Upload iOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-${{ matrix.sdk }}-libs
+          path: artifacts/ios-${{ matrix.sdk }}/
+
+  create-release:
+    needs: [build-windows, build-linux, build-macos, build-android, build-ios]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+
+      - name: Create release package
+        run: |
+          mkdir -p release-package/lib
+          
+          # Organize libraries by platform
+          cp -r all-artifacts/windows-x64-libs/* release-package/lib/ 2>/dev/null || true
+          cp -r all-artifacts/linux-x64-libs/* release-package/lib/ 2>/dev/null || true
+          cp -r all-artifacts/macos-x86_64-libs/* release-package/lib/ 2>/dev/null || true
+          cp -r all-artifacts/macos-arm64-libs/* release-package/lib/ 2>/dev/null || true
+          
+          mkdir -p release-package/lib/android
+          cp -r all-artifacts/android-*/* release-package/lib/android/ 2>/dev/null || true
+          
+          mkdir -p release-package/lib/ios
+          cp -r all-artifacts/ios-*/* release-package/lib/ios/ 2>/dev/null || true
+          
+          # Create archive
+          cd release-package
+          tar -czf ../linc_luau-libs-${GITHUB_REF_NAME}.tar.gz *
+          cd ..
+          zip -r linc_luau-libs-${GITHUB_REF_NAME}.zip release-package/*
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            linc_luau-libs-*.tar.gz
+            linc_luau-libs-*.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to repository
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Fetch latest changes
+          git fetch origin
+          git checkout main || git checkout master
+          git pull origin $(git branch --show-current)
+          
+          # Clear old binaries in lib/luau/lib
+          rm -rf lib/luau/lib/*
+          mkdir -p lib/luau/lib
+          
+          # Organize binaries by platform
+          mkdir -p lib/luau/lib/windows-x64
+          mkdir -p lib/luau/lib/linux-x64
+          mkdir -p lib/luau/lib/macos-x64
+          mkdir -p lib/luau/lib/macos-arm64
+          mkdir -p lib/luau/lib/android
+          mkdir -p lib/luau/lib/ios
+          
+          # Copy platform-specific libraries
+          cp -r all-artifacts/windows-x64-libs/* lib/luau/lib/windows-x64/ 2>/dev/null || true
+          cp -r all-artifacts/linux-x64-libs/* lib/luau/lib/linux-x64/ 2>/dev/null || true
+          cp -r all-artifacts/macos-x86_64-libs/* lib/luau/lib/macos-x64/ 2>/dev/null || true
+          cp -r all-artifacts/macos-arm64-libs/* lib/luau/lib/macos-arm64/ 2>/dev/null || true
+          cp -r all-artifacts/android-*/* lib/luau/lib/android/ 2>/dev/null || true
+          cp -r all-artifacts/ios-*/* lib/luau/lib/ios/ 2>/dev/null || true
+          
+          # Commit and push
+          git add lib/luau/lib
+          git commit -m "🤖 Update prebuilt Luau libraries for ${GITHUB_REF_NAME}
+          
+          - Windows x64
+          - Linux x64
+          - macOS x64 & ARM64
+          - Android (all ABIs)
+          - iOS (device & simulator)
+          
+          Auto-generated by GitHub Actions" || echo "No changes to commit"
+          
+          git push origin $(git branch --show-current)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
