@@ -1,4 +1,3 @@
-
 name: Build & Update Luau Libraries
 
 on:
@@ -29,14 +28,16 @@ jobs:
           from pathlib import Path
 
           path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "lookupAnnotation(ref->parameters.data[0].type)"
-          replacement = "lookupAnnotation(ann)"
+          marker = "if (auto ann = ref->parameters.data[0].type)"
+          replacement = "if (auto [[maybe_unused]] ann = ref->parameters.data[0].type)"
           text = path.read_text()
           if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
+            path.write_text(text.replace(marker, replacement, 1))
+            print("patched TypeChecker2.cpp")
+          elif replacement in text:
+            print("TypeChecker2 already patched")
           else:
-              print("marker not found; skipping patch (already applied?)")
+            print("marker not found; skip")
           PY
 
       - name: Patch Luau TypeChecker warning
@@ -47,14 +48,16 @@ jobs:
           from pathlib import Path
 
           path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "lookupAnnotation(ref->parameters.data[0].type)"
-          replacement = "lookupAnnotation(ann)"
+          marker = "if (auto ann = ref->parameters.data[0].type)"
+          replacement = "if (auto [[maybe_unused]] ann = ref->parameters.data[0].type)"
           text = path.read_text()
           if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
+            path.write_text(text.replace(marker, replacement, 1))
+            print("patched TypeChecker2.cpp")
+          elif replacement in text:
+            print("TypeChecker2 already patched")
           else:
-              print("marker not found; skipping patch (already applied?)")
+            print("marker not found; skip")
           PY
 
       - name: Patch Luau TypeChecker warning
@@ -65,50 +68,16 @@ jobs:
           from pathlib import Path
 
           path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "lookupAnnotation(ref->parameters.data[0].type)"
-          replacement = "lookupAnnotation(ann)"
+          marker = "if (auto ann = ref->parameters.data[0].type)"
+          replacement = "if (auto [[maybe_unused]] ann = ref->parameters.data[0].type)"
           text = path.read_text()
           if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
+            path.write_text(text.replace(marker, replacement, 1))
+            print("patched TypeChecker2.cpp")
+          elif replacement in text:
+            print("TypeChecker2 already patched")
           else:
-              print("marker not found; skipping patch (already applied?)")
-          PY
-
-      - name: Patch Luau TypeChecker warning
-        shell: bash
-        run: |
-          cd luau-build
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "lookupAnnotation(ref->parameters.data[0].type)"
-          replacement = "lookupAnnotation(ann)"
-          text = path.read_text()
-          if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
-          else:
-              print("marker not found; skipping patch (already applied?)")
-          PY
-
-      - name: Patch Luau TypeChecker warning
-        shell: bash
-        run: |
-          cd luau-build
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "lookupAnnotation(ref->parameters.data[0].type)"
-          replacement = "lookupAnnotation(ann)"
-          text = path.read_text()
-          if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
-          else:
-              print("marker not found; skipping patch (already applied?)")
+            print("marker not found; skip")
           PY
 
       - name: Setup MSVC
