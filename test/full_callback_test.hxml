@@ -1,0 +1,7 @@
+-lib linc_luau
+-main FullCallbackTest
+-cpp full_callback_cpp/
+-cp ../
+-cp .
+-cp test
+-cmd full_callback_cpp\\FullCallbackTest.exe

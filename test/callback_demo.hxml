@@ -1,0 +1,10 @@
+-lib linc_luau
+-main CallbackDemo
+-cpp callback_cpp/
+-cp ../
+-cp .
+-cp test
+# target flags can be enabled as needed
+#-D windows
+#-D HXCPP_M64
+#-cmd ./callback_cpp/CallbackDemo.exe

@@ -1,0 +1,10 @@
+{
+    "name": "linc_luajit",
+    "url": "https://github.com/Ajwyunsx/linc_luau",
+	"license": "MIT",
+    "tags": ["lua","luau","linc","bindings"],
+    "description": "Haxe/hxcpp @:native bindings for Luau (Luau only, LuaJIT removed).",
+	"version": "0.0.9",
+	"releasenote": "Removed all LuaJIT dependencies, Luau only.",
+	"contributors": ["Ajwyunsx"]
+}

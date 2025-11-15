@@ -1,0 +1,110 @@
+<xml>
+
+    <files id='haxe'>
+
+        <compilerflag value='-I${LINC_LUA_PATH}/linc/'/>
+        <compilerflag value='-I${LINC_LUA_PATH}/compat/'/>
+        <compilerflag value='-I${LINC_LUA_PATH}lib/luau/VM/include/'/>
+        <compilerflag value='-I${LINC_LUA_PATH}lib/luau/Compiler/include/'/>
+        <file name='${LINC_LUA_PATH}/linc/linc_lua.cpp' if="android"/> <!-- it's don't want to compile for android without that '/' for some reason -->
+        <file name='${LINC_LUA_PATH}linc/linc_lua.cpp' unless="android"/>
+
+    </files>
+
+    <files id="__main__">
+        <compilerflag value='-I${LINC_LUA_PATH}/linc/'/>
+        <compilerflag value='-I${LINC_LUA_PATH}/compat/'/>
+        <compilerflag value='-I${LINC_LUA_PATH}lib/luau/VM/include/'/>
+        <compilerflag value='-I${LINC_LUA_PATH}lib/luau/Compiler/include/'/>
+    </files>
+    <section id = "vars">
+		<set name = "NO_PRECOMPILED_HEADERS" value = "1" />
+    </section>
+    <target id="haxe">
+
+        <section if="windows" unless="mingw">
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows64/Luau.VM.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows64/Luau.Common.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows64/Luau.Ast.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows64/Luau.Compiler.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/WindowsArm64/Luau.VM.lib' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/WindowsArm64/Luau.Common.lib' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/WindowsArm64/Luau.Ast.lib' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/WindowsArm64/Luau.Compiler.lib' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows/Luau.VM.lib' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows/Luau.Common.lib' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows/Luau.Ast.lib' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows/Luau.Compiler.lib' if='HXCPP_M32' />
+        </section>
+        <section if="mingw">
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows64/libluauvm.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows64/libluaucompiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/WindowsArm64/libluauvm.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/WindowsArm64/libluaucompiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows/libluauvm.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows/libluaucompiler.a' if='HXCPP_M32' />
+        </section>
+        <section if="linux">
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/Linux64/libluauvm.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/Linux64/libluaucompiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/LinuxArm64/libluauvm.a' if='HXCPP_ARM64'/>
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/LinuxArm64/libluaucompiler.a' if='HXCPP_ARM64'/>
+        </section>
+        <section if="mac">
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/Mac/libluauvm.a' if='HXCPP_ARM64 || HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/Mac/libluaucompiler.a' if='HXCPP_ARM64 || HXCPP_M64' />
+        </section>
+        <section if="android">
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/Android/libluauvm.a' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/Android/libluaucompiler.a' />
+        </section>
+        <section if="ios">
+            <section if="iphoneos">
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/iPhone/libluauvm.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/iPhone/libluaucompiler.iphoneos-64.a' if='HXCPP_ARM64' />
+            </section>
+            <section if="iphonesim">
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/iPhone/libluauvm.iphonesim-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/iPhone/libluaucompiler.iphonesim-64.a' if='HXCPP_ARM64' />
+            </section>
+        </section>
+         <flag value="-fstack-protector" if="mingw"/>
+    </target>
+
+    <target id="__main__">
+        <section if="windows" unless="mingw">
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows64/Luau.VM.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows64/Luau.Common.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows64/Luau.Ast.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows64/Luau.Compiler.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/WindowsArm64/Luau.VM.lib' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/WindowsArm64/Luau.Common.lib' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/WindowsArm64/Luau.Ast.lib' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/WindowsArm64/Luau.Compiler.lib' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows/Luau.VM.lib' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows/Luau.Common.lib' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows/Luau.Ast.lib' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows/Luau.Compiler.lib' if='HXCPP_M32' />
+        </section>
+        <flag value="-fstack-protector" if="mingw"/>
+    </target>
+
+    <target id="__lib__">
+        <section if="windows" unless="mingw">
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows64/Luau.VM.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows64/Luau.Common.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows64/Luau.Ast.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows64/Luau.Compiler.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/WindowsArm64/Luau.VM.lib' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/WindowsArm64/Luau.Common.lib' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/WindowsArm64/Luau.Ast.lib' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/WindowsArm64/Luau.Compiler.lib' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows/Luau.VM.lib' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows/Luau.Common.lib' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows/Luau.Ast.lib' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/Windows/Luau.Compiler.lib' if='HXCPP_M32' />
+        </section>
+        <flag value="-fstack-protector" if="mingw"/>
+    </target>
+
+</xml>

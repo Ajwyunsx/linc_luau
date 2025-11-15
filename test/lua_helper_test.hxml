@@ -1,0 +1,10 @@
+-lib linc_luau
+-main LuaHelperTest
+-cpp lua_helper_cpp/
+-cp ../
+-cp .
+-cp test
+# Add platform flags as needed, e.g.:
+# -D windows
+# -D HXCPP_M64
+# Run result executable after build to see console output.
