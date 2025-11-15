@@ -28,56 +28,14 @@ jobs:
           from pathlib import Path
 
           path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "if (auto ann = ref->parameters.data[0].type)"
-          replacement = "if (auto [[maybe_unused]] ann = ref->parameters.data[0].type)"
+          marker = "lookupAnnotation(ref->parameters.data[0].type)"
+          replacement = "lookupAnnotation(ann)"
           text = path.read_text()
           if marker in text:
-            path.write_text(text.replace(marker, replacement, 1))
-            print("patched TypeChecker2.cpp")
-          elif replacement in text:
-            print("TypeChecker2 already patched")
+              path.write_text(text.replace(marker, replacement, 1))
+              print("patched TypeChecker2.cpp")
           else:
-            print("marker not found; skip")
-          PY
-
-      - name: Patch Luau TypeChecker warning
-        shell: bash
-        run: |
-          cd luau-build
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "if (auto ann = ref->parameters.data[0].type)"
-          replacement = "if (auto [[maybe_unused]] ann = ref->parameters.data[0].type)"
-          text = path.read_text()
-          if marker in text:
-            path.write_text(text.replace(marker, replacement, 1))
-            print("patched TypeChecker2.cpp")
-          elif replacement in text:
-            print("TypeChecker2 already patched")
-          else:
-            print("marker not found; skip")
-          PY
-
-      - name: Patch Luau TypeChecker warning
-        shell: bash
-        run: |
-          cd luau-build
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "if (auto ann = ref->parameters.data[0].type)"
-          replacement = "if (auto [[maybe_unused]] ann = ref->parameters.data[0].type)"
-          text = path.read_text()
-          if marker in text:
-            path.write_text(text.replace(marker, replacement, 1))
-            print("patched TypeChecker2.cpp")
-          elif replacement in text:
-            print("TypeChecker2 already patched")
-          else:
-            print("marker not found; skip")
+              print("marker not found; skipping patch (already applied?)")
           PY
 
       - name: Setup MSVC
@@ -127,6 +85,24 @@ jobs:
           cd luau-build
           git log -1 --oneline
 
+      - name: Patch Luau TypeChecker warning
+        shell: bash
+        run: |
+          cd luau-build
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("Analysis/src/TypeChecker2.cpp")
+          marker = "lookupAnnotation(ref->parameters.data[0].type)"
+          replacement = "lookupAnnotation(ann)"
+          text = path.read_text()
+          if marker in text:
+              path.write_text(text.replace(marker, replacement, 1))
+              print("patched TypeChecker2.cpp")
+          else:
+              print("marker not found; skipping patch (already applied?)")
+          PY
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -169,6 +145,24 @@ jobs:
           cd luau-build
           git log -1 --oneline
 
+      - name: Patch Luau TypeChecker warning
+        shell: bash
+        run: |
+          cd luau-build
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("Analysis/src/TypeChecker2.cpp")
+          marker = "lookupAnnotation(ref->parameters.data[0].type)"
+          replacement = "lookupAnnotation(ann)"
+          text = path.read_text()
+          if marker in text:
+              path.write_text(text.replace(marker, replacement, 1))
+              print("patched TypeChecker2.cpp")
+          else:
+              print("marker not found; skipping patch (already applied?)")
+          PY
+
       - name: Install dependencies
         run: |
           brew install cmake
@@ -209,6 +203,24 @@ jobs:
           git clone https://github.com/Roblox/luau.git luau-build
           cd luau-build
           git log -1 --oneline
+
+      - name: Patch Luau TypeChecker warning
+        shell: bash
+        run: |
+          cd luau-build
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("Analysis/src/TypeChecker2.cpp")
+          marker = "lookupAnnotation(ref->parameters.data[0].type)"
+          replacement = "lookupAnnotation(ann)"
+          text = path.read_text()
+          if marker in text:
+              path.write_text(text.replace(marker, replacement, 1))
+              print("patched TypeChecker2.cpp")
+          else:
+              print("marker not found; skipping patch (already applied?)")
+          PY
 
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
@@ -262,6 +274,24 @@ jobs:
           git clone https://github.com/Roblox/luau.git luau-build
           cd luau-build
           git log -1 --oneline
+
+      - name: Patch Luau TypeChecker warning
+        shell: bash
+        run: |
+          cd luau-build
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("Analysis/src/TypeChecker2.cpp")
+          marker = "lookupAnnotation(ref->parameters.data[0].type)"
+          replacement = "lookupAnnotation(ann)"
+          text = path.read_text()
+          if marker in text:
+              path.write_text(text.replace(marker, replacement, 1))
+              print("patched TypeChecker2.cpp")
+          else:
+              print("marker not found; skipping patch (already applied?)")
+          PY
 
       - name: Build Luau (iOS ${{ matrix.sdk }})
         run: |
