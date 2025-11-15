@@ -1,3 +1,4 @@
+
 name: Build & Update Luau Libraries
 
 on:
@@ -28,11 +29,14 @@ jobs:
           from pathlib import Path
 
           path = Path("Analysis/src/TypeChecker2.cpp")
-          text = path.read_text()
           marker = "lookupAnnotation(ref->parameters.data[0].type)"
-          if marker not in text:
-              raise SystemExit("marker not found")
-          path.write_text(text.replace(marker, "lookupAnnotation(ann)", 1))
+          replacement = "lookupAnnotation(ann)"
+          text = path.read_text()
+          if marker in text:
+              path.write_text(text.replace(marker, replacement, 1))
+              print("patched TypeChecker2.cpp")
+          else:
+              print("marker not found; skipping patch (already applied?)")
           PY
 
       - name: Patch Luau TypeChecker warning
@@ -43,11 +47,14 @@ jobs:
           from pathlib import Path
 
           path = Path("Analysis/src/TypeChecker2.cpp")
-          text = path.read_text()
           marker = "lookupAnnotation(ref->parameters.data[0].type)"
-          if marker not in text:
-              raise SystemExit("marker not found")
-          path.write_text(text.replace(marker, "lookupAnnotation(ann)", 1))
+          replacement = "lookupAnnotation(ann)"
+          text = path.read_text()
+          if marker in text:
+              path.write_text(text.replace(marker, replacement, 1))
+              print("patched TypeChecker2.cpp")
+          else:
+              print("marker not found; skipping patch (already applied?)")
           PY
 
       - name: Patch Luau TypeChecker warning
@@ -58,11 +65,14 @@ jobs:
           from pathlib import Path
 
           path = Path("Analysis/src/TypeChecker2.cpp")
-          text = path.read_text()
           marker = "lookupAnnotation(ref->parameters.data[0].type)"
-          if marker not in text:
-              raise SystemExit("marker not found")
-          path.write_text(text.replace(marker, "lookupAnnotation(ann)", 1))
+          replacement = "lookupAnnotation(ann)"
+          text = path.read_text()
+          if marker in text:
+              path.write_text(text.replace(marker, replacement, 1))
+              print("patched TypeChecker2.cpp")
+          else:
+              print("marker not found; skipping patch (already applied?)")
           PY
 
       - name: Patch Luau TypeChecker warning
@@ -73,11 +83,14 @@ jobs:
           from pathlib import Path
 
           path = Path("Analysis/src/TypeChecker2.cpp")
-          text = path.read_text()
           marker = "lookupAnnotation(ref->parameters.data[0].type)"
-          if marker not in text:
-              raise SystemExit("marker not found")
-          path.write_text(text.replace(marker, "lookupAnnotation(ann)", 1))
+          replacement = "lookupAnnotation(ann)"
+          text = path.read_text()
+          if marker in text:
+              path.write_text(text.replace(marker, replacement, 1))
+              print("patched TypeChecker2.cpp")
+          else:
+              print("marker not found; skipping patch (already applied?)")
           PY
 
       - name: Patch Luau TypeChecker warning
@@ -88,11 +101,14 @@ jobs:
           from pathlib import Path
 
           path = Path("Analysis/src/TypeChecker2.cpp")
-          text = path.read_text()
           marker = "lookupAnnotation(ref->parameters.data[0].type)"
-          if marker not in text:
-              raise SystemExit("marker not found")
-          path.write_text(text.replace(marker, "lookupAnnotation(ann)", 1))
+          replacement = "lookupAnnotation(ann)"
+          text = path.read_text()
+          if marker in text:
+              path.write_text(text.replace(marker, replacement, 1))
+              print("patched TypeChecker2.cpp")
+          else:
+              print("marker not found; skipping patch (already applied?)")
           PY
 
       - name: Setup MSVC
