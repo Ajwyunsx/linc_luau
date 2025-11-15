@@ -8,7 +8,7 @@ on:
   push:
     branches: [ main, master ]
     paths:
-      - '.github/workflows/build-libraries.yml'
+      - '.github/workflows/main.yml'
 
 jobs:
   build-windows:
@@ -16,7 +16,7 @@ jobs:
     steps:
       - name: Clone Luau repository
         run: |
-          git clone https://github.com/luau-lang/luau.git luau-build
+          git clone https://github.com/Roblox/luau.git luau-build
           cd luau-build
           git log -1 --oneline
 
@@ -31,11 +31,26 @@ jobs:
           cmake .. -DCMAKE_BUILD_TYPE=Release -A x64
           cmake --build . --config Release
           
+      - name: Setup LLVM strip
+        shell: pwsh
+        run: |
+          choco install llvm -y
+          refreshenv
+
       - name: Collect Windows Libraries
         run: |
           mkdir -p artifacts/windows-x64/lib
           Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/
           Copy-Item luau-build/build-release/Release/*.dll artifacts/windows-x64/lib/ -ErrorAction SilentlyContinue
+
+      - name: Strip Windows libraries
+        shell: pwsh
+        run: |
+          $strip = "${env:ProgramFiles}\LLVM\bin\llvm-strip.exe"
+          if (Test-Path $strip) {
+            Get-ChildItem artifacts/windows-x64/lib -Filter "*.lib" | ForEach-Object { & $strip --strip-debug $_.FullName }
+            Get-ChildItem artifacts/windows-x64/lib -Filter "*.dll" | ForEach-Object { & $strip --strip-debug $_.FullName }
+          }
           
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
@@ -48,7 +63,7 @@ jobs:
     steps:
       - name: Clone Luau repository
         run: |
-          git clone https://github.com/luau-lang/luau.git luau-build
+          git clone https://github.com/Roblox/luau.git luau-build
           cd luau-build
           git log -1 --oneline
 
@@ -70,6 +85,11 @@ jobs:
           mkdir -p artifacts/linux-x64/lib
           find luau-build/build-release -name "*.a" -exec cp {} artifacts/linux-x64/lib/ \;
           find luau-build/build-release -name "*.so" -exec cp {} artifacts/linux-x64/lib/ \; 2>/dev/null || true
+
+      - name: Strip Linux libraries
+        run: |
+          strip --strip-unneeded artifacts/linux-x64/lib/*.a
+          find artifacts/linux-x64/lib -name "*.so" -exec strip --strip-unneeded {} \; 2>/dev/null || true
           
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
@@ -85,7 +105,7 @@ jobs:
     steps:
       - name: Clone Luau repository
         run: |
-          git clone https://github.com/luau-lang/luau.git luau-build
+          git clone https://github.com/Roblox/luau.git luau-build
           cd luau-build
           git log -1 --oneline
 
@@ -106,6 +126,11 @@ jobs:
           mkdir -p artifacts/macos-${{ matrix.arch }}/lib
           find luau-build/build-release-${{ matrix.arch }} -name "*.a" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \;
           find luau-build/build-release-${{ matrix.arch }} -name "*.dylib" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \; 2>/dev/null || true
+
+      - name: Strip macOS libraries
+        run: |
+          strip -S artifacts/macos-${{ matrix.arch }}/lib/*.a
+          find artifacts/macos-${{ matrix.arch }}/lib -name "*.dylib" -exec strip -S {} \; 2>/dev/null || true
           
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
@@ -121,7 +146,7 @@ jobs:
     steps:
       - name: Clone Luau repository
         run: |
-          git clone https://github.com/luau-lang/luau.git luau-build
+          git clone https://github.com/Roblox/luau.git luau-build
           cd luau-build
           git log -1 --oneline
 
@@ -147,6 +172,18 @@ jobs:
           mkdir -p artifacts/android-${{ matrix.abi }}/lib
           find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \;
           find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \; 2>/dev/null || true
+
+      - name: Strip Android libraries
+        run: |
+          case "${{ matrix.abi }}" in
+            armeabi-v7a) TRIPLE=armv7a-linux-androideabi;;
+            arm64-v8a) TRIPLE=aarch64-linux-android;;
+            x86) TRIPLE=i686-linux-android;;
+            x86_64) TRIPLE=x86_64-linux-android;;
+          esac
+          STRIP_CMD=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/${TRIPLE}-strip
+          ${STRIP_CMD} --strip-unneeded artifacts/android-${{ matrix.abi }}/lib/*.a || true
+          find artifacts/android-${{ matrix.abi }}/lib -name "*.so" -exec ${STRIP_CMD} --strip-unneeded {} \; 2>/dev/null || true
           
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4
@@ -162,7 +199,7 @@ jobs:
     steps:
       - name: Clone Luau repository
         run: |
-          git clone https://github.com/luau-lang/luau.git luau-build
+          git clone https://github.com/Roblox/luau.git luau-build
           cd luau-build
           git log -1 --oneline
 
@@ -188,7 +225,11 @@ jobs:
       - name: Collect iOS Libraries
         run: |
           mkdir -p artifacts/ios-${{ matrix.sdk }}/lib
-          find luau-build/build-ios-${{ matrix.sdk }} -name "*.a" -exec cp {} artifacts/ios-${{ matrix.sdk }}/lib/ \;
+          cp luau-build/build-ios-${{ matrix.sdk }}/Release/*.a artifacts/ios-${{ matrix.sdk }}/lib/ 2>/dev/null || true
+
+      - name: Strip iOS libraries
+        run: |
+          xcrun strip -S artifacts/ios-${{ matrix.sdk }}/lib/*.a || true
           
       - name: Upload iOS Artifacts
         uses: actions/upload-artifact@v4
@@ -212,12 +253,15 @@ jobs:
       - name: Create release package
         run: |
           mkdir -p release-package/lib
+          for platform in windows-x64 linux-x64 macos-x64 macos-arm64; do
+            mkdir -p release-package/lib/${platform}
+          done
           
           # Organize libraries by platform
-          cp -r all-artifacts/windows-x64-libs/* release-package/lib/ 2>/dev/null || true
-          cp -r all-artifacts/linux-x64-libs/* release-package/lib/ 2>/dev/null || true
-          cp -r all-artifacts/macos-x86_64-libs/* release-package/lib/ 2>/dev/null || true
-          cp -r all-artifacts/macos-arm64-libs/* release-package/lib/ 2>/dev/null || true
+          cp -r all-artifacts/windows-x64-libs/* release-package/lib/windows-x64/ 2>/dev/null || true
+          cp -r all-artifacts/linux-x64-libs/* release-package/lib/linux-x64/ 2>/dev/null || true
+          cp -r all-artifacts/macos-x86_64-libs/* release-package/lib/macos-x64/ 2>/dev/null || true
+          cp -r all-artifacts/macos-arm64-libs/* release-package/lib/macos-arm64/ 2>/dev/null || true
           
           mkdir -p release-package/lib/android
           cp -r all-artifacts/android-*/* release-package/lib/android/ 2>/dev/null || true
@@ -225,11 +269,18 @@ jobs:
           mkdir -p release-package/lib/ios
           cp -r all-artifacts/ios-*/* release-package/lib/ios/ 2>/dev/null || true
           
-          # Create archive
-          cd release-package
-          tar -czf ../linc_luau-libs-${GITHUB_REF_NAME}.tar.gz *
-          cd ..
-          zip -r linc_luau-libs-${GITHUB_REF_NAME}.zip release-package/*
+          # Compress static libraries per platform
+          cd release-package/lib
+          for build in windows-x64 linux-x64 macos-x64 macos-arm64 android ios; do
+            if [ -d "${build}" ]; then
+              zip -r ../linc_luau-${build}-libs-${GITHUB_REF_NAME}.zip ${build}
+            fi
+          done
+          cd ../
+          
+          # Create combined archives
+          tar -czf ../linc_luau-libs-${GITHUB_REF_NAME}.tar.gz lib
+          zip -r linc_luau-libs-${GITHUB_REF_NAME}.zip lib linc_luau-*libs-${GITHUB_REF_NAME}.zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -237,6 +288,12 @@ jobs:
           files: |
             linc_luau-libs-*.tar.gz
             linc_luau-libs-*.zip
+            linc_luau-windows-x64-libs-*.zip
+            linc_luau-linux-x64-libs-*.zip
+            linc_luau-macos-x64-libs-*.zip
+            linc_luau-macos-arm64-libs-*.zip
+            linc_luau-android-libs-*.zip
+            linc_luau-ios-libs-*.zip
           draft: false
           prerelease: false
           generate_release_notes: true
