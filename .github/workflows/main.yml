@@ -20,6 +20,81 @@ jobs:
           cd luau-build
           git log -1 --oneline
 
+      - name: Patch Luau TypeChecker warning
+        shell: bash
+        run: |
+          cd luau-build
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("Analysis/src/TypeChecker2.cpp")
+          text = path.read_text()
+          marker = "lookupAnnotation(ref->parameters.data[0].type)"
+          if marker not in text:
+              raise SystemExit("marker not found")
+          path.write_text(text.replace(marker, "lookupAnnotation(ann)", 1))
+          PY
+
+      - name: Patch Luau TypeChecker warning
+        shell: bash
+        run: |
+          cd luau-build
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("Analysis/src/TypeChecker2.cpp")
+          text = path.read_text()
+          marker = "lookupAnnotation(ref->parameters.data[0].type)"
+          if marker not in text:
+              raise SystemExit("marker not found")
+          path.write_text(text.replace(marker, "lookupAnnotation(ann)", 1))
+          PY
+
+      - name: Patch Luau TypeChecker warning
+        shell: bash
+        run: |
+          cd luau-build
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("Analysis/src/TypeChecker2.cpp")
+          text = path.read_text()
+          marker = "lookupAnnotation(ref->parameters.data[0].type)"
+          if marker not in text:
+              raise SystemExit("marker not found")
+          path.write_text(text.replace(marker, "lookupAnnotation(ann)", 1))
+          PY
+
+      - name: Patch Luau TypeChecker warning
+        shell: bash
+        run: |
+          cd luau-build
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("Analysis/src/TypeChecker2.cpp")
+          text = path.read_text()
+          marker = "lookupAnnotation(ref->parameters.data[0].type)"
+          if marker not in text:
+              raise SystemExit("marker not found")
+          path.write_text(text.replace(marker, "lookupAnnotation(ann)", 1))
+          PY
+
+      - name: Patch Luau TypeChecker warning
+        shell: bash
+        run: |
+          cd luau-build
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("Analysis/src/TypeChecker2.cpp")
+          text = path.read_text()
+          marker = "lookupAnnotation(ref->parameters.data[0].type)"
+          if marker not in text:
+              raise SystemExit("marker not found")
+          path.write_text(text.replace(marker, "lookupAnnotation(ann)", 1))
+          PY
+
       - name: Setup MSVC
         uses: microsoft/setup-msbuild@v1.1
 
