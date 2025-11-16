@@ -1,4 +1,4 @@
-# Build & Update Luau Libraries (with LFS and optimization)
+# Build & Update Luau Libraries (with UPX compression and extreme optimization)
 name: Build & Update Luau Libraries
 
 permissions:
@@ -31,7 +31,6 @@ jobs:
           cd luau-build
           python - <<'PY'
           from pathlib import Path
-
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data[0].type)"
           replacement = "lookupAnnotation(ann)"
@@ -46,33 +45,38 @@ jobs:
       - name: Setup MSVC
         uses: microsoft/setup-msbuild@v1.1
 
+      - name: Install UPX
+        run: choco install upx -y
+
       - name: Build Luau (Windows x64)
         run: |
           cd luau-build
           mkdir build-release
           cd build-release
-          cmake .. -DCMAKE_BUILD_TYPE=Release -A x64 -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
-          cmake --build . --config Release
+          cmake .. -DCMAKE_BUILD_TYPE=Release -A x64 -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF `
+            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=TRUE `
+            -DCMAKE_C_FLAGS_RELEASE="/Os /GL /Gw" `
+            -DCMAKE_CXX_FLAGS_RELEASE="/Os /GL /Gw" `
+            -DCMAKE_EXE_LINKER_FLAGS_RELEASE="/LTCG /OPT:REF /OPT:ICF" `
+            -DCMAKE_SHARED_LINKER_FLAGS_RELEASE="/LTCG /OPT:REF /OPT:ICF"
+          cmake --build . --config Release --parallel
           
-      - name: Setup LLVM strip
-        shell: pwsh
-        run: |
-          choco install llvm -y
-          refreshenv
-
       - name: Collect Windows Libraries
         run: |
           mkdir -p artifacts/windows-x64/lib
           Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/
           Copy-Item luau-build/build-release/Release/*.dll artifacts/windows-x64/lib/ -ErrorAction SilentlyContinue
 
-      - name: Strip Windows libraries
+      - name: Strip and Compress Windows libraries
         shell: pwsh
         run: |
-          $strip = "${env:ProgramFiles}\LLVM\bin\llvm-strip.exe"
-          if (Test-Path $strip) {
-            Get-ChildItem artifacts/windows-x64/lib -Filter "*.lib" | ForEach-Object { & $strip --strip-debug $_.FullName }
-            Get-ChildItem artifacts/windows-x64/lib -Filter "*.dll" | ForEach-Object { & $strip --strip-debug $_.FullName }
+          # Strip symbols
+          Get-ChildItem artifacts/windows-x64/lib -Filter "*.lib" | ForEach-Object { 
+            & "${env:ProgramFiles}\LLVM\bin\llvm-strip.exe" --strip-debug $_.FullName 
+          }
+          Get-ChildItem artifacts/windows-x64/lib -Filter "*.dll" | ForEach-Object { 
+            & "${env:ProgramFiles}\LLVM\bin\llvm-strip.exe" --strip-debug $_.FullName 
+            upx --best --lzma $_.FullName 
           }
           
       - name: Upload Windows Artifacts
@@ -96,7 +100,6 @@ jobs:
           cd luau-build
           python - <<'PY'
           from pathlib import Path
-
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data[0].type)"
           replacement = "lookupAnnotation(ann)"
@@ -111,14 +114,19 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake
+          sudo apt-get install -y build-essential cmake upx-ucl
 
       - name: Build Luau (Linux x64)
         run: |
           cd luau-build
           mkdir build-release
           cd build-release
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF \
+            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=TRUE \
+            -DCMAKE_C_FLAGS_RELEASE="-Os -ffunction-sections -fdata-sections -flto" \
+            -DCMAKE_CXX_FLAGS_RELEASE="-Os -ffunction-sections -fdata-sections -flto" \
+            -DCMAKE_EXE_LINKER_FLAGS_RELEASE="-Wl,--gc-sections -Wl,--strip-all" \
+            -DCMAKE_SHARED_LINKER_FLAGS_RELEASE="-Wl,--gc-sections -Wl,--strip-all"
           cmake --build . --config Release -j$(nproc)
           
       - name: Collect Linux Libraries
@@ -127,10 +135,11 @@ jobs:
           find luau-build/build-release -name "*.a" -exec cp {} artifacts/linux-x64/lib/ \;
           find luau-build/build-release -name "*.so" -exec cp {} artifacts/linux-x64/lib/ \; 2>/dev/null || true
 
-      - name: Strip Linux libraries
+      - name: Strip and Compress Linux libraries
         run: |
-          strip --strip-unneeded artifacts/linux-x64/lib/*.a
-          find artifacts/linux-x64/lib -name "*.so" -exec strip --strip-unneeded {} \; 2>/dev/null || true
+          strip --strip-unneeded --strip-debug artifacts/linux-x64/lib/*.a
+          find artifacts/linux-x64/lib -name "*.so" -exec strip --strip-unneeded --strip-debug {} \; 2>/dev/null || true
+          find artifacts/linux-x64/lib -name "*.so" -exec upx --best --lzma {} \; 2>/dev/null || true
           
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
@@ -156,7 +165,6 @@ jobs:
           cd luau-build
           python - <<'PY'
           from pathlib import Path
-
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data[0].type)"
           replacement = "lookupAnnotation(ann)"
@@ -170,14 +178,19 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install cmake
+          brew install cmake upx
 
       - name: Build Luau (macOS ${{ matrix.arch }})
         run: |
           cd luau-build
           mkdir build-release-${{ matrix.arch }}
           cd build-release-${{ matrix.arch }}
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF \
+            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=TRUE \
+            -DCMAKE_C_FLAGS_RELEASE="-Os -ffunction-sections -fdata-sections -flto" \
+            -DCMAKE_CXX_FLAGS_RELEASE="-Os -ffunction-sections -fdata-sections -flto" \
+            -DCMAKE_EXE_LINKER_FLAGS_RELEASE="-Wl,-dead_strip -Wl,-x" \
+            -DCMAKE_SHARED_LINKER_FLAGS_RELEASE="-Wl,-dead_strip -Wl,-x"
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
           
       - name: Collect macOS Libraries
@@ -186,10 +199,11 @@ jobs:
           find luau-build/build-release-${{ matrix.arch }} -name "*.a" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \;
           find luau-build/build-release-${{ matrix.arch }} -name "*.dylib" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \; 2>/dev/null || true
 
-      - name: Strip macOS libraries
+      - name: Strip and Compress macOS libraries
         run: |
-          strip -S artifacts/macos-${{ matrix.arch }}/lib/*.a
-          find artifacts/macos-${{ matrix.arch }}/lib -name "*.dylib" -exec strip -S {} \; 2>/dev/null || true
+          strip -S -x artifacts/macos-${{ matrix.arch }}/lib/*.a
+          find artifacts/macos-${{ matrix.arch }}/lib -name "*.dylib" -exec strip -S -x {} \; 2>/dev/null || true
+          find artifacts/macos-${{ matrix.arch }}/lib -name "*.dylib" -exec upx --best --lzma {} \; 2>/dev/null || true
           
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
@@ -215,7 +229,6 @@ jobs:
           cd luau-build
           python - <<'PY'
           from pathlib import Path
-
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data[0].type)"
           replacement = "lookupAnnotation(ann)"
@@ -232,6 +245,9 @@ jobs:
         with:
           ndk-version: r25c
 
+      - name: Install UPX
+        run: sudo apt-get install -y upx-ucl
+
       - name: Build Luau (Android ${{ matrix.abi }})
         run: |
           cd luau-build
@@ -244,10 +260,11 @@ jobs:
             -DANDROID_ABI=${ANDROID_ABI} \
             -DANDROID_PLATFORM=android-21 \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden" \
-            -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden" \
-            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--gc-sections" \
+            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=TRUE \
+            -DCMAKE_C_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden -flto" \
+            -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden -flto" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections -Wl,--strip-all" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--gc-sections -Wl,--strip-all" \
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(nproc)
           
@@ -257,7 +274,7 @@ jobs:
           find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \;
           find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \; 2>/dev/null || true
 
-      - name: Strip Android libraries
+      - name: Strip and Compress Android libraries
         run: |
           case "${{ matrix.abi }}" in
             armv7) TRIPLE=armv7a-linux-androideabi;;
@@ -268,6 +285,7 @@ jobs:
           STRIP_CMD=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/${TRIPLE}-strip
           ${STRIP_CMD} --strip-unneeded --strip-debug artifacts/android-${{ matrix.abi }}/lib/*.a || true
           find artifacts/android-${{ matrix.abi }}/lib -name "*.so" -exec ${STRIP_CMD} --strip-unneeded --strip-debug {} \; 2>/dev/null || true
+          find artifacts/android-${{ matrix.abi }}/lib -name "*.so" -exec upx --best --lzma {} \; 2>/dev/null || true
           
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4
@@ -293,7 +311,6 @@ jobs:
           cd luau-build
           python - <<'PY'
           from pathlib import Path
-
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data[0].type)"
           replacement = "lookupAnnotation(ann)"
@@ -322,8 +339,10 @@ jobs:
             -DCMAKE_OSX_SYSROOT=${{ matrix.sdk }} \
             -DCMAKE_OSX_ARCHITECTURES=$ARCH \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="-Os -ffunction-sections -fdata-sections" \
-            -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections" \
+            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=TRUE \
+            -DCMAKE_C_FLAGS="-Os -ffunction-sections -fdata-sections -flto" \
+            -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections -flto" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,-dead_strip -Wl,-x" \
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
           
@@ -342,4 +361,132 @@ jobs:
           name: ios-${{ matrix.sdk }}-libs
           path: artifacts/ios-${{ matrix.sdk }}/
 
-  
+  create-release:
+    needs: [build-windows, build-linux, build-macos, build-android, build-ios]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+
+      - name: Create release package
+        run: |
+          mkdir -p release-package/lib
+          for platform in windows-x64 linux-x64 macos-x64 macos-arm64; do
+            mkdir -p release-package/lib/${platform}
+          done
+          
+          cp -r all-artifacts/windows-x64-libs/* release-package/lib/windows-x64/ 2>/dev/null || true
+          cp -r all-artifacts/linux-x64-libs/* release-package/lib/linux-x64/ 2>/dev/null || true
+          cp -r all-artifacts/macos-x86_64-libs/* release-package/lib/macos-x64/ 2>/dev/null || true
+          cp -r all-artifacts/macos-arm64-libs/* release-package/lib/macos-arm64/ 2>/dev/null || true
+          
+          mkdir -p release-package/lib/android/armv7
+          mkdir -p release-package/lib/android/arm64-v8a
+          mkdir -p release-package/lib/android/x86
+          mkdir -p release-package/lib/android/x86_64
+          cp -r all-artifacts/android-armv7-libs/* release-package/lib/android/armv7/ 2>/dev/null || true
+          cp -r all-artifacts/android-arm64-v8a-libs/* release-package/lib/android/arm64-v8a/ 2>/dev/null || true
+          cp -r all-artifacts/android-x86-libs/* release-package/lib/android/x86/ 2>/dev/null || true
+          cp -r all-artifacts/android-x86_64-libs/* release-package/lib/android/x86_64/ 2>/dev/null || true
+          
+          mkdir -p release-package/lib/ios
+          cp -r all-artifacts/ios-*/* release-package/lib/ios/ 2>/dev/null || true
+          
+          cd release-package/lib
+          for build in windows-x64 linux-x64 macos-x64 macos-arm64 android ios; do
+            if [ -d "${build}" ]; then
+              zip -r ../linc_luau-${build}-libs-${GITHUB_REF_NAME}.zip ${build}
+            fi
+          done
+          cd ../
+          
+          tar -czf ../linc_luau-libs-${GITHUB_REF_NAME}.tar.gz lib
+          zip -r linc_luau-libs-${GITHUB_REF_NAME}.zip lib linc_luau-*libs-${GITHUB_REF_NAME}.zip
+
+      - name: Create GitHub Release (only on tags v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            linc_luau-libs-*.tar.gz
+            linc_luau-libs-*.zip
+            linc_luau-windows-x64-libs-*.zip
+            linc_luau-linux-x64-libs-*.zip
+            linc_luau-macos-x64-libs-*.zip
+            linc_luau-macos-arm64-libs-*.zip
+            linc_luau-android-libs-*.zip
+            linc_luau-ios-libs-*.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to repository (No LFS)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin main
+          git checkout main
+          git pull origin main
+
+          # Remove old libraries
+          rm -rf lib/luau/lib || true
+          
+          # Create directory structure
+          mkdir -p lib/luau/lib/windows-x64
+          mkdir -p lib/luau/lib/linux-x64
+          mkdir -p lib/luau/lib/macos-x64
+          mkdir -p lib/luau/lib/macos-arm64
+          mkdir -p lib/luau/lib/android/armv7
+          mkdir -p lib/luau/lib/android/arm64-v8a
+          mkdir -p lib/luau/lib/android/x86
+          mkdir -p lib/luau/lib/android/x86_64
+          mkdir -p lib/luau/lib/ios
+
+          # Copy new libraries
+          cp -r all-artifacts/windows-x64-libs/* lib/luau/lib/windows-x64/ 2>/dev/null || true
+          cp -r all-artifacts/linux-x64-libs/* lib/luau/lib/linux-x64/ 2>/dev/null || true
+          cp -r all-artifacts/macos-x86_64-libs/* lib/luau/lib/macos-x64/ 2>/dev/null || true
+          cp -r all-artifacts/macos-arm64-libs/* lib/luau/lib/macos-arm64/ 2>/dev/null || true
+          cp -r all-artifacts/android-armv7-libs/* lib/luau/lib/android/armv7/ 2>/dev/null || true
+          cp -r all-artifacts/android-arm64-v8a-libs/* lib/luau/lib/android/arm64-v8a/ 2>/dev/null || true
+          cp -r all-artifacts/android-x86-libs/* lib/luau/lib/android/x86/ 2>/dev/null || true
+          cp -r all-artifacts/android-x86_64-libs/* lib/luau/lib/android/x86_64/ 2>/dev/null || true
+          cp -r all-artifacts/ios-*/* lib/luau/lib/ios/ 2>/dev/null || true
+
+          # Setup remote URL with token
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}"
+
+          # Add libraries to git
+          git add lib/luau/lib
+          
+          # Check if there are changes
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          # Commit with author as the user who triggered the workflow
+          GIT_AUTHOR_NAME="${{ github.actor }}" \
+          GIT_AUTHOR_EMAIL="${{ github.actor }}@users.noreply.github.com" \
+          git commit -m "🤖 Update prebuilt Luau libraries for ${{ github.ref_name }}
+
+          - Built with extreme size optimizations (-Os, -flto, -ffunction-sections, -fdata-sections)
+          - Libraries compressed with UPX (LZMA mode)
+          - Platforms: Windows, Linux, macOS, Android, iOS"
+
+          # Push changes
+          git push origin main
