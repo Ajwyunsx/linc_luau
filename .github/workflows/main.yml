@@ -2,7 +2,7 @@
 # with here-documents to avoid unexpected EOF while looking for matching `"' errors.
 # Also removed stray/unmatched characters and normalized spacing.
 
-name: Build & Update Luau Libraries
+name: Build & Updaaate Luau Libraries
 
 permissions:
   contents: write
