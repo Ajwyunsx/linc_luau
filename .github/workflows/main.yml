@@ -1,7 +1,6 @@
 name: Build & Update Luau Libraries
 
 on:
-  # 你可以保留 schedule / workflow_dispatch，如果只想在 tag 时跑，就把下面两块删掉
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
@@ -9,9 +8,6 @@ on:
     branches: [ main, master ]
     paths:
       - '.github/workflows/main.yml'
-  
-    tags:
-      - 'v*'
 
 jobs:
   build-windows:
@@ -337,7 +333,7 @@ jobs:
   create-release:
     needs: [build-windows, build-linux, build-macos, build-android, build-ios]
     runs-on: ubuntu-latest
-    # 注意：这里不再使用任何 job-level if，保证 job 只要 workflow 触发就不会被标成 skipped。
+    # 不再用 job-level if，防止 job 被整体标成 skipped
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -356,13 +352,11 @@ jobs:
             mkdir -p release-package/lib/${platform}
           done
           
-          # Organize libraries by platform
           cp -r all-artifacts/windows-x64-libs/* release-package/lib/windows-x64/ 2>/dev/null || true
           cp -r all-artifacts/linux-x64-libs/* release-package/lib/linux-x64/ 2>/dev/null || true
           cp -r all-artifacts/macos-x86_64-libs/* release-package/lib/macos-x64/ 2>/dev/null || true
           cp -r all-artifacts/macos-arm64-libs/* release-package/lib/macos-arm64/ 2>/dev/null || true
           
-          # Android per-ABI
           mkdir -p release-package/lib/android/armv7
           mkdir -p release-package/lib/android/arm64-v8a
           mkdir -p release-package/lib/android/x86
@@ -375,7 +369,6 @@ jobs:
           mkdir -p release-package/lib/ios
           cp -r all-artifacts/ios-*/* release-package/lib/ios/ 2>/dev/null || true
           
-          # Compress static libraries per platform
           cd release-package/lib
           for build in windows-x64 linux-x64 macos-x64 macos-arm64 android ios; do
             if [ -d "${build}" ]; then
@@ -384,11 +377,10 @@ jobs:
           done
           cd ../
           
-          # Create combined archives
           tar -czf ../linc_luau-libs-${GITHUB_REF_NAME}.tar.gz lib
           zip -r linc_luau-libs-${GITHUB_REF_NAME}.zip lib linc_luau-*libs-${GITHUB_REF_NAME}.zip
 
-      - name: Create GitHub Release (only when tag, safe if non-tag)
+      - name: Create GitHub Release (only on tags v*)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v1
         with:
@@ -466,6 +458,6 @@ jobs:
           else
             GIT_AUTHOR_NAME="${AUTHOR_NAME}" \
             GIT_AUTHOR_EMAIL="${AUTHOR_EMAIL}" \
-            git commit -m "Update prebuilt Luau libraries for ${GITHUB_REF_NAME}
+            git commit -m "Update prebuilt Luau libraries for ${GITHUB_REF_NAME}" --author="${AUTHOR_NAME} <${AUTHOR_EMAIL}>"
             git push origin main
           fi
