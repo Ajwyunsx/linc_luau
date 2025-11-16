@@ -9,9 +9,9 @@ on:
     branches: [ main, master ]
     paths:
       - '.github/workflows/main.yml'
-  # 真正触发 create-release 的事件
-  tags:
-    - 'v*'
+  
+    tags:
+      - 'v*'
 
 jobs:
   build-windows:
