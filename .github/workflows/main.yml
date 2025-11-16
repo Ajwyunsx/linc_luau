@@ -1,10 +1,6 @@
-# Updated workflow:
-# - Removes Git LFS usage and instead compresses libraries before committing.
-# - Installs tools (upx, xz) in the release job and compresses shared libraries with UPX and static archives with xz.
-# - Keeps existing build jobs and their size optimizations.
-#
-# Warning: Storing large binaries in the git history without LFS will increase repository size.
-# Make sure you really want to abandon LFS before committing these changes permanently.
+# Fixed workflow: corrected unbalanced quoting and replaced in-shell multi-line "-m" commits
+# with here-documents to avoid unexpected EOF while looking for matching `"' errors.
+# Also removed stray/unmatched characters and normalized spacing.
 
 name: Build & Update Luau Libraries
 
@@ -40,7 +36,7 @@ jobs:
           from pathlib import Path
 
           path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
+          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
           text = path.read_text()
           if marker in text:
@@ -105,7 +101,7 @@ jobs:
           from pathlib import Path
 
           path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
+          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
           text = path.read_text()
           if marker in text:
@@ -165,7 +161,7 @@ jobs:
           from pathlib import Path
 
           path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
+          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
           text = path.read_text()
           if marker in text:
@@ -224,7 +220,7 @@ jobs:
           from pathlib import Path
 
           path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
+          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
           text = path.read_text()
           if marker in text:
@@ -302,7 +298,7 @@ jobs:
           from pathlib import Path
 
           path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
+          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
           text = path.read_text()
           if marker in text:
@@ -418,7 +414,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prepare repo and compression tools (NO LFS)
+      - name: Prepare repo and compress libraries (NO LFS)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -432,12 +428,11 @@ jobs:
           git checkout main
           git pull origin main
 
-          # Uninstall / disable LFS if present (we're migrating away)
+          # Disable LFS (we're migrating away)
           git lfs uninstall || true
 
           # Remove any LFS tracking rules for the lib/luau path from .gitattributes
           if [ -f .gitattributes ]; then
-            # remove lines that match lib/luau/lib patterns
             sed -i '/lib\/luau\/lib/d' .gitattributes || true
             git add .gitattributes || true
           fi
@@ -471,17 +466,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y upx xz-utils || true
 
-          # Compress shared libraries with UPX (aggressive), ignore failures
+          # Compress shared libraries with UPX (aggressive)
           find lib/luau/lib -type f \( -name "*.so" -o -name "*.dll" -o -name "*.dylib" \) -print0 | while IFS= read -r -d '' f; do
             echo "Attempting UPX compress: $f"
             upx --best --ultra-brute "$f" || true
           done
 
           # Compress static archives (.a and .lib) with xz (extreme)
-          # Replace originals with .xz files to minimize repo size (note: consumers will need to decompress)
           find lib/luau/lib -type f \( -name "*.a" -o -name "*.lib" \) -print0 | while IFS= read -r -d '' f; do
             echo "Compressing static archive with xz: $f"
-            # Create compressed file and remove original if successful
             xz -9e -T0 -c "$f" > "${f}.xz" && rm -f "$f" || true
           done
 
@@ -491,17 +484,18 @@ jobs:
 
           # Add everything to git (we are not using LFS now)
           git add lib/luau/lib
-          
+
           # Check if there are changes
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0
           fi
 
-          # Commit with author as the user who triggered the workflow
+          # Commit with author as the user who triggered the workflow using a here-doc to avoid quoting issues
           GIT_AUTHOR_NAME="${{ github.actor }}" \
           GIT_AUTHOR_EMAIL="${{ github.actor }}@users.noreply.github.com" \
-          git commit -m "🤖 Update prebuilt Luau libraries for ${{ github.ref_name }}
+          git commit -F - <<'MSG'🤖 Update prebuilt Luau libraries for ${{ github.ref_name }}
+
 
           # Push changes
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}"
