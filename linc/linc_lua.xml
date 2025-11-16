@@ -6,17 +6,19 @@
         <compilerflag value='-I${LINC_LUA_PATH}/compat/'/>
         <compilerflag value='-I${LINC_LUA_PATH}lib/luau/VM/include/'/>
         <compilerflag value='-I${LINC_LUA_PATH}lib/luau/Compiler/include/'/>
+        <compilerflag value='-I${LINC_LUA_PATH}lib/luau/CodeGen/include/'/>
         <!-- Android 特殊路径：保留两种写法以兼容不同构建系统对路径的解析 -->
         <file name='${LINC_LUA_PATH}/linc/linc_lua.cpp' if="android"/>
         <file name='${LINC_LUA_PATH}linc/linc_lua.cpp' unless="android"/>
 
     </files>
 
-    <files id="__main__">
+    <files id='__main__'>
         <compilerflag value='-I${LINC_LUA_PATH}/linc/'/>
         <compilerflag value='-I${LINC_LUA_PATH}/compat/'/>
         <compilerflag value='-I${LINC_LUA_PATH}lib/luau/VM/include/'/>
         <compilerflag value='-I${LINC_LUA_PATH}lib/luau/Compiler/include/'/>
+        <compilerflag value='-I${LINC_LUA_PATH}lib/luau/CodeGen/include/'/>
     </files>
 
     <section id="vars">
@@ -44,85 +46,133 @@
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/Luau.Common.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/Luau.Ast.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/Luau.Compiler.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/Luau.CodeGen.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
 
             <!-- Windows arm64 (if you later add windows-arm64 artifacts) -->
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/Luau.VM.lib' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/Luau.Common.lib' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/Luau.Ast.lib' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/Luau.Compiler.lib' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/Luau.CodeGen.lib' if='HXCPP_ARM64' />
 
             <!-- Windows 32-bit (legacy) -->
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/Luau.VM.lib' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/Luau.Common.lib' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/Luau.Ast.lib' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/Luau.Compiler.lib' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/Luau.CodeGen.lib' if='HXCPP_M32' />
         </section>
 
         <section if="mingw">
-            <!-- MinGW static libs (map to windows-x64/windows-arm64 structure where appropriate) -->
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libluauvm.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libluaucompiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libluauvm.a' if='HXCPP_ARM64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libluaucompiler.a' if='HXCPP_ARM64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libluauvm.a' if='HXCPP_M32' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libluaucompiler.a' if='HXCPP_M32' />
+            <!-- MinGW: 使用五个独立库文件，匹配Windows MSVC结构 -->
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libLuau.VM.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libLuau.Common.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libLuau.Ast.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libLuau.Compiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libLuau.CodeGen.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libLuau.VM.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libLuau.Common.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libLuau.Ast.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libLuau.CodeGen.a' if='HXCPP_ARM64' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libLuau.VM.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libLuau.Common.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libLuau.Ast.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libLuau.Compiler.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libLuau.CodeGen.a' if='HXCPP_M32' />
         </section>
 
         <section if="linux">
-            <!-- Linux x64 (workflow produces linux-x64) -->
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libluauvm.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libluaucompiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <!-- Linux: 使用五个独立库文件，匹配Windows结构 -->
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libLuau.VM.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libLuau.Common.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libLuau.Ast.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libLuau.Compiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libLuau.CodeGen.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
 
             <!-- Linux arm64 -->
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libluauvm.a' if='HXCPP_ARM64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libluaucompiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libLuau.VM.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libLuau.Common.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libLuau.Ast.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libLuau.CodeGen.a' if='HXCPP_ARM64' />
         </section>
 
         <section if="mac">
-            <!-- macOS: match workflow naming -> macos-x64 and macos-arm64 -->
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libluauvm.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libluaucompiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libluauvm.a' if='HXCPP_ARM64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libluaucompiler.a' if='HXCPP_ARM64' />
+            <!-- macOS: 使用五个独立库文件，匹配Windows结构 -->
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libLuau.VM.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libLuau.Common.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libLuau.Ast.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libLuau.Compiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libLuau.CodeGen.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libLuau.VM.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libLuau.Common.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libLuau.Ast.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libLuau.CodeGen.a' if='HXCPP_ARM64' />
         </section>
 
         <section if="android">
-            <!-- Android: per-ABI directories produced by the workflow (now using armv7 for 32-bit ARM) -->
+            <!-- Android: 使用五个独立库文件，匹配Windows结构 -->
             <!-- armv7 (32-bit ARM) -->
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libluauvm.a' if='HXCPP_ARMV7' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libluaucompiler.a' if='HXCPP_ARMV7' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libLuau.VM.a' if='HXCPP_ARMV7' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libLuau.Common.a' if='HXCPP_ARMV7' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libLuau.Ast.a' if='HXCPP_ARMV7' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libLuau.Compiler.a' if='HXCPP_ARMV7' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libLuau.CodeGen.a' if='HXCPP_ARMV7' />
 
             <!-- arm64-v8a (64-bit ARM) -->
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libluauvm.a' if='HXCPP_ARM64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libluaucompiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libLuau.VM.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libLuau.Common.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libLuau.Ast.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libLuau.CodeGen.a' if='HXCPP_ARM64' />
 
             <!-- x86 (32-bit Intel) -->
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libluauvm.a' if='HXCPP_M32' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libluaucompiler.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libLuau.VM.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libLuau.Common.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libLuau.Ast.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libLuau.Compiler.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libLuau.CodeGen.a' if='HXCPP_M32' />
 
             <!-- x86_64 (64-bit Intel) -->
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libluauvm.a' if='HXCPP_M64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libluaucompiler.a' if='HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libLuau.VM.a' if='HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libLuau.Common.a' if='HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libLuau.Ast.a' if='HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libLuau.Compiler.a' if='HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libLuau.CodeGen.a' if='HXCPP_M64' />
 
             <!--
               Fallback (flattened) path kept for compatibility with current create-release copy behaviour
               (the workflow currently flattens android artifacts into lib/android/). Uncomment if you rely on flattened names.
             -->
             <!--
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/libluauvm.a' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/libluaucompiler.a' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/libLuau.VM.a' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/libLuau.Common.a' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/libLuau.Ast.a' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/libLuau.Compiler.a' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/libLuau.CodeGen.a' />
             -->
         </section>
 
         <section if="ios">
-            <!-- iOS: workflow copies iphoneos / iphonesimulator artifacts into lib/luau/lib/ios/ -->
+            <!-- iOS: 使用五个独立库文件，匹配Windows结构 -->
             <section if="iphoneos">
-                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libluauvm.iphoneos-64.a' if='HXCPP_ARM64' />
-                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libluaucompiler.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.VM.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Common.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Ast.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Compiler.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.CodeGen.iphoneos-64.a' if='HXCPP_ARM64' />
             </section>
             <section if="iphonesim">
-                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libluauvm.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
-                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libluaucompiler.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.VM.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Common.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Ast.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Compiler.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.CodeGen.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
             </section>
         </section>
 
@@ -135,26 +185,115 @@
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/Luau.Common.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/Luau.Ast.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/Luau.Compiler.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/Luau.CodeGen.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/Luau.VM.lib' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/Luau.Common.lib' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/Luau.Ast.lib' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/Luau.Compiler.lib' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/Luau.CodeGen.lib' if='HXCPP_ARM64' />
+            
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/Luau.VM.lib' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/Luau.Common.lib' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/Luau.Ast.lib' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/Luau.Compiler.lib' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/Luau.CodeGen.lib' if='HXCPP_M32' />
+        </section>
+
+        <section if="mingw">
+            <!-- MinGW: 使用五个独立库文件 -->
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libLuau.VM.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libLuau.Common.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libLuau.Ast.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libLuau.Compiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libLuau.CodeGen.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libLuau.VM.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libLuau.Common.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libLuau.Ast.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libLuau.CodeGen.a' if='HXCPP_ARM64' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libLuau.VM.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libLuau.Common.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libLuau.Ast.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libLuau.Compiler.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libLuau.CodeGen.a' if='HXCPP_M32' />
+        </section>
+
+        <section if="linux">
+            <!-- Linux: 使用五个独立库文件 -->
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libLuau.VM.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libLuau.Common.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libLuau.Ast.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libLuau.Compiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libLuau.CodeGen.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libLuau.VM.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libLuau.Common.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libLuau.Ast.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libLuau.CodeGen.a' if='HXCPP_ARM64' />
+        </section>
+
+        <section if="mac">
+            <!-- macOS: 使用五个独立库文件 -->
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libLuau.VM.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libLuau.Common.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libLuau.Ast.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libLuau.Compiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libLuau.CodeGen.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libLuau.VM.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libLuau.Common.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libLuau.Ast.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libLuau.CodeGen.a' if='HXCPP_ARM64' />
         </section>
 
         <section if="android">
-            <!-- Mirror of per-ABI android libs for __main__ linkage -->
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libluauvm.a' if='HXCPP_ARMV7' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libluaucompiler.a' if='HXCPP_ARMV7' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libluauvm.a' if='HXCPP_ARM64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libluaucompiler.a' if='HXCPP_ARM64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libluauvm.a' if='HXCPP_M32' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libluaucompiler.a' if='HXCPP_M32' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libluauvm.a' if='HXCPP_M64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libluaucompiler.a' if='HXCPP_M64' />
+            <!-- Android: 使用五个独立库文件 -->
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libLuau.VM.a' if='HXCPP_ARMV7' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libLuau.Common.a' if='HXCPP_ARMV7' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libLuau.Ast.a' if='HXCPP_ARMV7' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libLuau.Compiler.a' if='HXCPP_ARMV7' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libLuau.CodeGen.a' if='HXCPP_ARMV7' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libLuau.VM.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libLuau.Common.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libLuau.Ast.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libLuau.CodeGen.a' if='HXCPP_ARM64' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libLuau.VM.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libLuau.Common.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libLuau.Ast.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libLuau.Compiler.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libLuau.CodeGen.a' if='HXCPP_M32' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libLuau.VM.a' if='HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libLuau.Common.a' if='HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libLuau.Ast.a' if='HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libLuau.Compiler.a' if='HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libLuau.CodeGen.a' if='HXCPP_M64' />
+        </section>
+
+        <section if="ios">
+            <!-- iOS: 使用五个独立库文件 -->
+            <section if="iphoneos">
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.VM.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Common.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Ast.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Compiler.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.CodeGen.iphoneos-64.a' if='HXCPP_ARM64' />
+            </section>
+            <section if="iphonesim">
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.VM.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Common.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Ast.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Compiler.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.CodeGen.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+            </section>
         </section>
 
         <flag value="-fstack-protector" if="mingw"/>
@@ -166,26 +305,115 @@
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/Luau.Common.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/Luau.Ast.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/Luau.Compiler.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/Luau.CodeGen.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/Luau.VM.lib' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/Luau.Common.lib' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/Luau.Ast.lib' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/Luau.Compiler.lib' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/Luau.CodeGen.lib' if='HXCPP_ARM64' />
+            
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/Luau.VM.lib' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/Luau.Common.lib' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/Luau.Ast.lib' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/Luau.Compiler.lib' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/Luau.CodeGen.lib' if='HXCPP_M32' />
+        </section>
+
+        <section if="mingw">
+            <!-- MinGW: 使用五个独立库文件 -->
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libLuau.VM.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libLuau.Common.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libLuau.Ast.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libLuau.Compiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-x64/libLuau.CodeGen.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libLuau.VM.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libLuau.Common.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libLuau.Ast.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows-arm64/libLuau.CodeGen.a' if='HXCPP_ARM64' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libLuau.VM.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libLuau.Common.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libLuau.Ast.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libLuau.Compiler.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/windows/libLuau.CodeGen.a' if='HXCPP_M32' />
+        </section>
+
+        <section if="linux">
+            <!-- Linux: 使用五个独立库文件 -->
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libLuau.VM.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libLuau.Common.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libLuau.Ast.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libLuau.Compiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-x64/libLuau.CodeGen.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libLuau.VM.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libLuau.Common.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libLuau.Ast.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/linux-arm64/libLuau.CodeGen.a' if='HXCPP_ARM64' />
+        </section>
+
+        <section if="mac">
+            <!-- macOS: 使用五个独立库文件 -->
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libLuau.VM.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libLuau.Common.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libLuau.Ast.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libLuau.Compiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-x64/libLuau.CodeGen.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libLuau.VM.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libLuau.Common.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libLuau.Ast.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/macos-arm64/libLuau.CodeGen.a' if='HXCPP_ARM64' />
         </section>
 
         <section if="android">
-            <!-- Mirror for __lib__ as well -->
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libluauvm.a' if='HXCPP_ARMV7' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libluaucompiler.a' if='HXCPP_ARMV7' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libluauvm.a' if='HXCPP_ARM64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libluaucompiler.a' if='HXCPP_ARM64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libluauvm.a' if='HXCPP_M32' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libluaucompiler.a' if='HXCPP_M32' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libluauvm.a' if='HXCPP_M64' />
-            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libluaucompiler.a' if='HXCPP_M64' />
+            <!-- Android: 使用五个独立库文件 -->
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libLuau.VM.a' if='HXCPP_ARMV7' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libLuau.Common.a' if='HXCPP_ARMV7' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libLuau.Ast.a' if='HXCPP_ARMV7' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libLuau.Compiler.a' if='HXCPP_ARMV7' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/armv7/libLuau.CodeGen.a' if='HXCPP_ARMV7' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libLuau.VM.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libLuau.Common.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libLuau.Ast.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/arm64-v8a/libLuau.CodeGen.a' if='HXCPP_ARM64' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libLuau.VM.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libLuau.Common.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libLuau.Ast.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libLuau.Compiler.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86/libLuau.CodeGen.a' if='HXCPP_M32' />
+            
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libLuau.VM.a' if='HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libLuau.Common.a' if='HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libLuau.Ast.a' if='HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libLuau.Compiler.a' if='HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}/lib/luau/lib/android/x86_64/libLuau.CodeGen.a' if='HXCPP_M64' />
+        </section>
+
+        <section if="ios">
+            <!-- iOS: 使用五个独立库文件 -->
+            <section if="iphoneos">
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.VM.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Common.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Ast.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Compiler.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.CodeGen.iphoneos-64.a' if='HXCPP_ARM64' />
+            </section>
+            <section if="iphonesim">
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.VM.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Common.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Ast.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.Compiler.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+                <lib name='${LINC_LUA_PATH}/lib/luau/lib/ios/libLuau.CodeGen.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+            </section>
         </section>
 
         <flag value="-fstack-protector" if="mingw"/>
