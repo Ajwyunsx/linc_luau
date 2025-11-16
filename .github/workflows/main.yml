@@ -1,4 +1,4 @@
-# Build & Update Luau Libraries (with LFS and optimization)
+# Build & Update Luau Libraries (without LFS, optimized size)
 name: Build & Update Luau Libraries
 
 permissions:
@@ -46,19 +46,30 @@ jobs:
       - name: Setup MSVC
         uses: microsoft/setup-msbuild@v1.1
 
-      - name: Build Luau (Windows x64)
+      - name: Build Luau (Windows x64) - Optimized Size
         run: |
           cd luau-build
           mkdir build-release
           cd build-release
-          cmake .. -DCMAKE_BUILD_TYPE=Release -A x64 -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
-          cmake --build . --config Release
           
-      - name: Setup LLVM strip
-        shell: pwsh
+          # 使用适中的优化级别，避免过度压缩
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -A x64 \
+            -DBUILD_TESTING=OFF \
+            -DLUAU_BUILD_TESTS=OFF \
+            -DCMAKE_C_FLAGS="/O2 /Zi /MP" \
+            -DCMAKE_CXX_FLAGS="/O2 /Zi /MP" \
+            -DCMAKE_EXE_LINKER_FLAGS="/LTCG" \
+            -DCMAKE_SHARED_LINKER_FLAGS="/LTCG"
+          
+          cmake --build . --config Release --parallel
+
+      - name: Check Windows Library Sizes
         run: |
-          choco install llvm -y
-          refreshenv
+          echo "=== Windows Library Sizes ==="
+          dir "luau-build/build-release\Release\*.lib" | ForEach-Object { Write-Host "$($_.Name): $([math]::Round($_.Length/1MB, 2)) MB" }
+          dir "luau-build/build-release\Release\*.dll" 2>$null | ForEach-Object { Write-Host "$($_.Name): $([math]::Round($_.Length/1MB, 2)) MB" }
 
       - name: Collect Windows Libraries
         run: |
@@ -66,15 +77,30 @@ jobs:
           Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/
           Copy-Item luau-build/build-release/Release/*.dll artifacts/windows-x64/lib/ -ErrorAction SilentlyContinue
 
-      - name: Strip Windows libraries
+      - name: Minimal Strip Windows libraries
         shell: pwsh
         run: |
           $strip = "${env:ProgramFiles}\LLVM\bin\llvm-strip.exe"
           if (Test-Path $strip) {
-            Get-ChildItem artifacts/windows-x64/lib -Filter "*.lib" | ForEach-Object { & $strip --strip-debug $_.FullName }
-            Get-ChildItem artifacts/windows-x64/lib -Filter "*.dll" | ForEach-Object { & $strip --strip-debug $_.FullName }
+            # 只移除调试符号，保留符号表
+            Get-ChildItem artifacts/windows-x64/lib -Filter "*.lib" | ForEach-Object { 
+              & $strip --strip-debug --preserve-dates $_.FullName 
+            }
+            Get-ChildItem artifacts/windows-x64/lib -Filter "*.dll" | ForEach-Object { 
+              & $strip --strip-debug --preserve-dates $_.FullName 
+            }
           }
           
+      - name: Final Size Check (Windows)
+        run: |
+          echo "=== Final Windows Library Sizes ==="
+          Get-ChildItem artifacts/windows-x64/lib | ForEach-Object { 
+            $sizeMB = [math]::Round($_.Length/1MB, 2)
+            Write-Host "$($_.Name): $sizeMB MB"
+          }
+          $totalSize = (Get-ChildItem artifacts/windows-x64/lib | Measure-Object -Property Length -Sum).Sum / 1MB
+          Write-Host "Total Windows Libraries: $([math]::Round($totalSize, 2)) MB"
+
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -113,25 +139,52 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake
 
-      - name: Build Luau (Linux x64)
+      - name: Build Luau (Linux x64) - Optimized Size
         run: |
           cd luau-build
           mkdir build-release
           cd build-release
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
-          cmake --build . --config Release -j$(nproc)
           
+          # 使用适中的优化参数，避免过度压缩
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            -DLUAU_BUILD_TESTS=OFF \
+            -DCMAKE_C_FLAGS="-O2 -g -march=x86-64 -mtune=generic" \
+            -DCMAKE_CXX_FLAGS="-O2 -g -march=x86-64 -mtune=generic" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--gc-sections"
+          
+          cmake --build . --config Release -j$(nproc)
+
+      - name: Check Library Sizes Before Strip (Linux)
+        run: |
+          echo "=== Linux Library Sizes Before Strip ==="
+          find luau-build/build-release -name "*.a" -o -name "*.so" | while read file; do
+            size=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null)
+            sizeMB=$(echo "scale=2; $size/1024/1024" | bc)
+            basename "$file": $sizeMB MB
+          done
+
       - name: Collect Linux Libraries
         run: |
           mkdir -p artifacts/linux-x64/lib
           find luau-build/build-release -name "*.a" -exec cp {} artifacts/linux-x64/lib/ \;
           find luau-build/build-release -name "*.so" -exec cp {} artifacts/linux-x64/lib/ \; 2>/dev/null || true
 
-      - name: Strip Linux libraries
+      - name: Minimal Strip Linux libraries
         run: |
-          strip --strip-unneeded artifacts/linux-x64/lib/*.a
-          find artifacts/linux-x64/lib -name "*.so" -exec strip --strip-unneeded {} \; 2>/dev/null || true
+          # 只移除调试节，保留符号表和函数信息
+          strip --remove-section=.comment --remove-section=.note --preserve-dates artifacts/linux-x64/lib/*.a 2>/dev/null || true
+          find artifacts/linux-x64/lib -name "*.so" -exec strip --remove-section=.comment --remove-section=.note --preserve-dates {} \; 2>/dev/null || true
           
+      - name: Final Size Check (Linux)
+        run: |
+          echo "=== Final Linux Library Sizes ==="
+          ls -lh artifacts/linux-x64/lib/ | awk '{print $5, $9}'
+          echo "Total Linux Libraries:"
+          du -sh artifacts/linux-x64/
+
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -172,12 +225,22 @@ jobs:
         run: |
           brew install cmake
 
-      - name: Build Luau (macOS ${{ matrix.arch }})
+      - name: Build Luau (macOS ${{ matrix.arch }}) - Optimized Size
         run: |
           cd luau-build
           mkdir build-release-${{ matrix.arch }}
           cd build-release-${{ matrix.arch }}
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+          
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
+            -DBUILD_TESTING=OFF \
+            -DLUAU_BUILD_TESTS=OFF \
+            -DCMAKE_C_FLAGS="-O2 -g" \
+            -DCMAKE_CXX_FLAGS="-O2 -g" \
+            -DCMAKE_EXE_LINKER_FLAGS="" \
+            -DCMAKE_SHARED_LINKER_FLAGS=""
+          
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
           
       - name: Collect macOS Libraries
@@ -186,10 +249,16 @@ jobs:
           find luau-build/build-release-${{ matrix.arch }} -name "*.a" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \;
           find luau-build/build-release-${{ matrix.arch }} -name "*.dylib" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \; 2>/dev/null || true
 
-      - name: Strip macOS libraries
+      - name: Minimal Strip macOS libraries
         run: |
-          strip -S artifacts/macos-${{ matrix.arch }}/lib/*.a
-          find artifacts/macos-${{ matrix.arch }}/lib -name "*.dylib" -exec strip -S {} \; 2>/dev/null || true
+          # 只移除调试信息，保留符号表
+          strip -x -S artifacts/macos-${{ matrix.arch }}/lib/*.a 2>/dev/null || true
+          find artifacts/macos-${{ matrix.arch }}/lib -name "*.dylib" -exec strip -x -S {} \; 2>/dev/null || true
+
+      - name: Final Size Check (macOS)
+        run: |
+          echo "=== Final macOS ${{ matrix.arch }} Library Sizes ==="
+          ls -lh artifacts/macos-${{ matrix.arch }}/lib/ | awk '{print $5, $9}'
           
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
@@ -232,23 +301,26 @@ jobs:
         with:
           ndk-version: r25c
 
-      - name: Build Luau (Android ${{ matrix.abi }})
+      - name: Build Luau (Android ${{ matrix.abi }}) - Optimized Size
         run: |
           cd luau-build
           mkdir build-android-${{ matrix.abi }}
           cd build-android-${{ matrix.abi }}
+          
           ANDROID_ABI=${{ matrix.abi }}
           if [ "${{ matrix.abi }}" = "armv7" ]; then ANDROID_ABI="armeabi-v7a"; fi
+          
           cmake .. \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=${ANDROID_ABI} \
             -DANDROID_PLATFORM=android-21 \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden" \
-            -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden" \
+            -DCMAKE_C_FLAGS="-O2 -g" \
+            -DCMAKE_CXX_FLAGS="-O2 -g" \
             -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections" \
             -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--gc-sections" \
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+            
           cmake --build . --config Release -j$(nproc)
           
       - name: Collect Android Libraries
@@ -257,7 +329,7 @@ jobs:
           find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \;
           find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \; 2>/dev/null || true
 
-      - name: Strip Android libraries
+      - name: Minimal Strip Android libraries
         run: |
           case "${{ matrix.abi }}" in
             armv7) TRIPLE=armv7a-linux-androideabi;;
@@ -265,9 +337,12 @@ jobs:
             x86) TRIPLE=i686-linux-android;;
             x86_64) TRIPLE=x86_64-linux-android;;
           esac
+          
           STRIP_CMD=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/${TRIPLE}-strip
-          ${STRIP_CMD} --strip-unneeded --strip-debug artifacts/android-${{ matrix.abi }}/lib/*.a || true
-          find artifacts/android-${{ matrix.abi }}/lib -name "*.so" -exec ${STRIP_CMD} --strip-unneeded --strip-debug {} \; 2>/dev/null || true
+          
+          # 只移除调试节，保留符号表
+          ${STRIP_CMD} --remove-section=.comment --remove-section=.note artifacts/android-${{ matrix.abi }}/lib/*.a 2>/dev/null || true
+          find artifacts/android-${{ matrix.abi }}/lib -name "*.so" -exec ${STRIP_CMD} --remove-section=.comment --remove-section=.note {} \; 2>/dev/null || true
           
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4
@@ -305,7 +380,7 @@ jobs:
               print("marker not found; skipping patch (already applied?)")
           PY
 
-      - name: Build Luau (iOS ${{ matrix.sdk }})
+      - name: Build Luau (iOS ${{ matrix.sdk }}) - Optimized Size
         run: |
           cd luau-build
           mkdir build-ios-${{ matrix.sdk }}
@@ -322,9 +397,10 @@ jobs:
             -DCMAKE_OSX_SYSROOT=${{ matrix.sdk }} \
             -DCMAKE_OSX_ARCHITECTURES=$ARCH \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="-Os -ffunction-sections -fdata-sections" \
-            -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections" \
+            -DCMAKE_C_FLAGS="-O2 -g" \
+            -DCMAKE_CXX_FLAGS="-O2 -g" \
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+            
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
           
       - name: Collect iOS Libraries
@@ -332,9 +408,10 @@ jobs:
           mkdir -p artifacts/ios-${{ matrix.sdk }}/lib
           cp luau-build/build-ios-${{ matrix.sdk }}/Release/*.a artifacts/ios-${{ matrix.sdk }}/lib/ 2>/dev/null || true
 
-      - name: Strip iOS libraries
+      - name: Minimal Strip iOS libraries
         run: |
-          xcrun strip -S -x artifacts/ios-${{ matrix.sdk }}/lib/*.a || true
+          # 只移除调试信息
+          xcrun strip -S -x artifacts/ios-${{ matrix.sdk }}/lib/*.a 2>/dev/null || true
           
       - name: Upload iOS Artifacts
         uses: actions/upload-artifact@v4
@@ -346,25 +423,6 @@ jobs:
     needs: [build-windows, build-linux, build-macos, build-android, build-ios]
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          # Ensure LFS is pulled
-          lfs: true
-
-      - name: Setup Git LFS
-        run: |
-          git lfs install
-          # Configure LFS to track large files
-          git lfs track "lib/luau/lib/**/*.a"
-          git lfs track "lib/luau/lib/**/*.lib"
-          git lfs track "lib/luau/lib/**/*.so"
-          git lfs track "lib/luau/lib/**/*.dylib"
-          git lfs track "lib/luau/lib/**/*.dll"
-          git add .gitattributes
-          git commit -m "Configure Git LFS for library files" || true
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -373,27 +431,30 @@ jobs:
       - name: Create release package
         run: |
           mkdir -p release-package/lib
+          
+          # 创建目录结构
           for platform in windows-x64 linux-x64 macos-x64 macos-arm64; do
             mkdir -p release-package/lib/${platform}
           done
-          
-          cp -r all-artifacts/windows-x64-libs/* release-package/lib/windows-x64/ 2>/dev/null || true
-          cp -r all-artifacts/linux-x64-libs/* release-package/lib/linux-x64/ 2>/dev/null || true
-          cp -r all-artifacts/macos-x86_64-libs/* release-package/lib/macos-x64/ 2>/dev/null || true
-          cp -r all-artifacts/macos-arm64-libs/* release-package/lib/macos-arm64/ 2>/dev/null || true
           
           mkdir -p release-package/lib/android/armv7
           mkdir -p release-package/lib/android/arm64-v8a
           mkdir -p release-package/lib/android/x86
           mkdir -p release-package/lib/android/x86_64
+          mkdir -p release-package/lib/ios
+          
+          # 复制文件
+          cp -r all-artifacts/windows-x64-libs/* release-package/lib/windows-x64/ 2>/dev/null || true
+          cp -r all-artifacts/linux-x64-libs/* release-package/lib/linux-x64/ 2>/dev/null || true
+          cp -r all-artifacts/macos-x86_64-libs/* release-package/lib/macos-x64/ 2>/dev/null || true
+          cp -r all-artifacts/macos-arm64-libs/* release-package/lib/macos-arm64/ 2>/dev/null || true
           cp -r all-artifacts/android-armv7-libs/* release-package/lib/android/armv7/ 2>/dev/null || true
           cp -r all-artifacts/android-arm64-v8a-libs/* release-package/lib/android/arm64-v8a/ 2>/dev/null || true
           cp -r all-artifacts/android-x86-libs/* release-package/lib/android/x86/ 2>/dev/null || true
           cp -r all-artifacts/android-x86_64-libs/* release-package/lib/android/x86_64/ 2>/dev/null || true
-          
-          mkdir -p release-package/lib/ios
           cp -r all-artifacts/ios-*/* release-package/lib/ios/ 2>/dev/null || true
           
+          # 创建压缩包
           cd release-package/lib
           for build in windows-x64 linux-x64 macos-x64 macos-arm64 android ios; do
             if [ -d "${build}" ]; then
@@ -402,9 +463,10 @@ jobs:
           done
           cd ../
           
+          # 创建最终包
           tar -czf ../linc_luau-libs-${GITHUB_REF_NAME}.tar.gz lib
           zip -r linc_luau-libs-${GITHUB_REF_NAME}.zip lib linc_luau-*libs-${GITHUB_REF_NAME}.zip
-
+          
       - name: Create GitHub Release (only on tags v*)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v1
@@ -424,7 +486,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload to repository with LFS
+      - name: Upload libraries to repository (no LFS)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -437,10 +499,10 @@ jobs:
           git checkout main
           git pull origin main
 
-          # Remove old libraries
+          # 清理旧文件
           rm -rf lib/luau/lib || true
           
-          # Create directory structure
+          # 创建目录结构
           mkdir -p lib/luau/lib/windows-x64
           mkdir -p lib/luau/lib/linux-x64
           mkdir -p lib/luau/lib/macos-x64
@@ -451,7 +513,7 @@ jobs:
           mkdir -p lib/luau/lib/android/x86_64
           mkdir -p lib/luau/lib/ios
 
-          # Copy new libraries
+          # 复制新库文件（不使用LFS）
           cp -r all-artifacts/windows-x64-libs/* lib/luau/lib/windows-x64/ 2>/dev/null || true
           cp -r all-artifacts/linux-x64-libs/* lib/luau/lib/linux-x64/ 2>/dev/null || true
           cp -r all-artifacts/macos-x86_64-libs/* lib/luau/lib/macos-x64/ 2>/dev/null || true
@@ -462,34 +524,27 @@ jobs:
           cp -r all-artifacts/android-x86_64-libs/* lib/luau/lib/android/x86_64/ 2>/dev/null || true
           cp -r all-artifacts/ios-*/* lib/luau/lib/ios/ 2>/dev/null || true
 
-          # Setup remote URL with token
+          # 设置远程URL
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}"
 
-          # Add LFS tracking if not already tracked
-          git lfs track "lib/luau/lib/**/*.a"
-          git lfs track "lib/luau/lib/**/*.lib"
-          git lfs track "lib/luau/lib/**/*.so"
-          git lfs track "lib/luau/lib/**/*.dylib"
-          git lfs track "lib/luau/lib/**/*.dll"
-          git add .gitattributes
-
-          # Add libraries to LFS
+          # 添加库文件（普通Git，不使用LFS）
           git add lib/luau/lib
           
-          # Check if there are changes
+          # 检查是否有变化
           if git diff --cached --quiet; then
-            echo "No changes to commit"
+            echo "没有变化需要提交"
             exit 0
           fi
 
-          # Commit with author as the user who triggered the workflow
+          # 提交更改
           GIT_AUTHOR_NAME="${{ github.actor }}" \
           GIT_AUTHOR_EMAIL="${{ github.actor }}@users.noreply.github.com" \
           git commit -m "🤖 Update prebuilt Luau libraries for ${{ github.ref_name }}
 
-          - Built with size optimizations (-Os, -ffunction-sections, -fdata-sections)
-          - Libraries tracked with Git LFS
-          - Platforms: Windows, Linux, macOS, Android, iOS"
+          - Built with moderate optimization (-O2)
+          - Libraries without Git LFS (direct Git storage)
+          - Platforms: Windows, Linux, macOS, Android, iOS
+          - Optimized size (target ~15MB total)"
 
-          # Push changes
+          # 推送到仓库
           git push origin main
