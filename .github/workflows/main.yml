@@ -12,8 +12,8 @@ on:
     branches: [ main, master ]
     paths:
       - '.github/workflows/main.yml'
-  tags:
-     - 'v*'
+    tags:
+      - 'v*'
 
 jobs:
   build-windows:
