@@ -449,5 +449,6 @@ jobs:
           # Commit with you as author, bot as committer
           GIT_AUTHOR_NAME="${{ github.actor }}" \
           GIT_AUTHOR_EMAIL="${{ github.actor }}@users.noreply.github.com" \
-          git commit -m "🤖 Update prebuilt Luau libraries for ${{ github.ref_name }}
+          git commit -m "🤖 Update prebuilt Luau libraries for ${{ github.ref_name }}"
+
           git push origin main
