@@ -25,88 +25,146 @@ jobs:
           cd luau-build
           git log -1 --oneline
 
-      - name: Patch Luau TypeChecker warning
+      - name: Patch Luau TypeChecker warning - Robust
         shell: bash
         run: |
+          set -e
           cd luau-build
-          python - <<'PY'
-          from pathlib import Path
+          
+          # 创建临时Python脚本
+          cat > temp_patch.py << 'EOF'
+          import pathlib
+          import sys
 
-          path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "lookupAnnotation(ref->parameters.data[0].type)"
-          replacement = "lookupAnnotation(ann)"
-          text = path.read_text()
-          if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
-          else:
-              print("marker not found; skipping patch (already applied?)")
-          PY
+           try:
+               path = pathlib.Path("Analysis/src/TypeChecker2.cpp")
+                if path.exists():
+                  text = path.read_text(encoding='utf-8')
+                  marker = "lookupAnnotation(ref->parameters.data[0].type)"
+                  replacement = "lookupAnnotation(ann)"
+      
 
       - name: Setup MSVC
         uses: microsoft/setup-msbuild@v1.1
 
-      - name: Build Luau (Windows x64) - Optimized Size
+      - name: Build Luau (Windows x64) - Robust
         run: |
           cd luau-build
-          mkdir build-release
+          
+          # 创建构建目录
+          if (-not (Test-Path "build-release")) {
+            New-Item -ItemType Directory -Force -Path "build-release"
+          }
+          
           cd build-release
           
-          # 使用适中的优化级别，避免过度压缩
+          # 配置CMake
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -A x64 \
             -DBUILD_TESTING=OFF \
             -DLUAU_BUILD_TESTS=OFF \
-            -DCMAKE_C_FLAGS="/O2 /Zi /MP" \
-            -DCMAKE_CXX_FLAGS="/O2 /Zi /MP" \
-            -DCMAKE_EXE_LINKER_FLAGS="/LTCG" \
-            -DCMAKE_SHARED_LINKER_FLAGS="/LTCG"
+            -DCMAKE_C_FLAGS="/O2 /Zi" \
+            -DCMAKE_CXX_FLAGS="/O2 /Zi" \
+            -G "NMake Makefiles"
           
-          cmake --build . --config Release --parallel
+          # 构建
+          nmake
 
-      - name: Check Windows Library Sizes
-        run: |
-          echo "=== Windows Library Sizes ==="
-          dir "luau-build/build-release\Release\*.lib" | ForEach-Object { Write-Host "$($_.Name): $([math]::Round($_.Length/1MB, 2)) MB" }
-          dir "luau-build/build-release\Release\*.dll" 2>$null | ForEach-Object { Write-Host "$($_.Name): $([math]::Round($_.Length/1MB, 2)) MB" }
-
-      - name: Collect Windows Libraries
-        run: |
-          mkdir -p artifacts/windows-x64/lib
-          Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/
-          Copy-Item luau-build/build-release/Release/*.dll artifacts/windows-x64/lib/ -ErrorAction SilentlyContinue
-
-      - name: Minimal Strip Windows libraries
+      - name: Setup LLVM strip
         shell: pwsh
         run: |
-          $strip = "${env:ProgramFiles}\LLVM\bin\llvm-strip.exe"
-          if (Test-Path $strip) {
-            # 只移除调试符号，保留符号表
-            Get-ChildItem artifacts/windows-x64/lib -Filter "*.lib" | ForEach-Object { 
-              & $strip --strip-debug --preserve-dates $_.FullName 
+          choco install llvm -y
+          refreshenv
+          
+          # 验证安装
+          $llvmStrip = "${env:ProgramFiles}\LLVM\bin\llvm-strip.exe"
+          if (Test-Path $llvmStrip) {
+            Write-Host "✅ LLVM installed successfully"
+            echo "STRIP_CMD=$llvmStrip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          } else {
+            Write-Host "⚠️  LLVM strip not found"
+          }
+
+      - name: Collect Windows Libraries - Robust
+        run: |
+          # 确保目录存在
+          New-Item -ItemType Directory -Force -Path "artifacts\windows-x64\lib"
+          
+          $buildDir = "luau-build\build-release"
+          
+          # 复制.lib文件
+          $libFiles = Get-ChildItem -Path $buildDir -Filter "*.lib" -ErrorAction SilentlyContinue
+          if ($libFiles) {
+            foreach ($file in $libFiles) {
+              Copy-Item $file.FullName "artifacts\windows-x64\lib\" -Force
+              Write-Host "✅ Copied: $($file.Name)"
             }
-            Get-ChildItem artifacts/windows-x64/lib -Filter "*.dll" | ForEach-Object { 
-              & $strip --strip-debug --preserve-dates $_.FullName 
+          } else {
+            Write-Host "⚠️  No .lib files found"
+          }
+          
+          # 复制.dll文件
+          $dllFiles = Get-ChildItem -Path $buildDir -Filter "*.dll" -ErrorAction SilentlyContinue
+          if ($dllFiles) {
+            foreach ($file in $dllFiles) {
+              Copy-Item $file.FullName "artifacts\windows-x64\lib\" -Force
+              Write-Host "✅ Copied: $($file.Name)"
             }
           }
           
-      - name: Final Size Check (Windows)
-        run: |
-          echo "=== Final Windows Library Sizes ==="
-          Get-ChildItem artifacts/windows-x64/lib | ForEach-Object { 
-            $sizeMB = [math]::Round($_.Length/1MB, 2)
-            Write-Host "$($_.Name): $sizeMB MB"
+          # 验证结果
+          Write-Host "`n📊 Collected libraries:"
+          Get-ChildItem "artifacts\windows-x64\lib" | ForEach-Object {
+            $sizeKB = [math]::Round($_.Length/1KB, 2)
+            Write-Host "  $($_.Name): $sizeKB KB"
           }
-          $totalSize = (Get-ChildItem artifacts/windows-x64/lib | Measure-Object -Property Length -Sum).Sum / 1MB
-          Write-Host "Total Windows Libraries: $([math]::Round($totalSize, 2)) MB"
+
+      - name: Strip Windows libraries - Robust
+        shell: pwsh
+        run: |
+          $strip = $env:STRIP_CMD
+          
+          if ($strip -and (Test-Path $strip)) {
+            Write-Host "🛠️  Stripping libraries..."
+            
+            # 记录原始大小
+            Write-Host "`nBefore stripping:"
+            Get-ChildItem "artifacts\windows-x64\lib" | ForEach-Object {
+              $sizeKB = [math]::Round($_.Length/1KB, 2)
+              Write-Host "  $($_.Name): $sizeKB KB"
+            }
+            
+            # 执行strip
+            Get-ChildItem "artifacts\windows-x64\lib" | ForEach-Object { 
+              try {
+                & $strip --strip-debug $_.FullName
+                Write-Host "✅ Stripped: $($_.Name)"
+              } catch {
+                Write-Host "⚠️  Failed to strip: $($_.Name)"
+              }
+            }
+            
+            # 记录处理后大小
+            Write-Host "`nAfter stripping:"
+            Get-ChildItem "artifacts\windows-x64\lib" | ForEach-Object {
+              $sizeKB = [math]::Round($_.Length/1KB, 2)
+              Write-Host "  $($_.Name): $sizeKB KB"
+            }
+            
+            # 计算总大小
+            $totalSize = (Get-ChildItem "artifacts\windows-x64\lib" | Measure-Object -Property Length -Sum).Sum / 1MB
+            Write-Host "`n📊 Total size: $([math]::Round($totalSize, 2)) MB"
+            
+          } else {
+            Write-Host "⚠️  llvm-strip not available, skipping strip"
+          }
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-x64-libs
           path: artifacts/windows-x64/
-
   build-linux:
     runs-on: ubuntu-latest
     steps:
