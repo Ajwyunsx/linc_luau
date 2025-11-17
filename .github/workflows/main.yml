@@ -479,6 +479,11 @@ jobs:
             xz -9e -T0 -c "$f" > "${f}.xz" && rm -f "$f" || true
           done
 
+          # Rename compressed files to remove .xz extension
+          find lib/luau/lib -name "*.xz" -type f | while read file; do
+            mv "$file" "${file%.xz}"
+          done
+
           # Optional: list compressed files for logs
           echo "Compressed files summary:"
           find lib/luau/lib -type f -printf "%p %s\n" || true
