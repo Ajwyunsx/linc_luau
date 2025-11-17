@@ -1,11 +1,3 @@
-# Fixed workflow: corrected unbalanced quoting and replaced in-shell multi-line "-m" commits
-# with here-documents to avoid unexpected EOF while looking for matching `"' errors.
-# Also removed stray/unmatched characters and normalized spacing.
-# **FIXED**: git commit -F -> -m, and corrected workflow name typo
-# **ENHANCED**: Added ultra-aggressive compression for static libraries
-# **FIXED**: Fixed ar command path issue in compress_static_lib function
-# **FIXED**: Fixed macOS UPX installation - use Homebrew instead of downloading
-# **FIXED**: Fixed Windows static library compression - extract and compress object files
 
 name: Build & Update Luau Libraries
 
@@ -94,45 +86,6 @@ jobs:
             }
           }
           
-          # Function to compress a Windows static library
-          compress_static_lib() {
-            param([string]$libPath)
-            $libName = Split-Path $libPath -Leaf
-            $tempDir = Join-Path $env:TEMP "compress_$(Get-Random)"
-            New-Item -ItemType Directory -Path $tempDir -Force
-            
-            Write-Host "Processing static library: $libName"
-            
-            try {
-              # Use llvm-ar to extract object files
-              Push-Location $tempDir
-              & "${env:ProgramFiles}\LLVM\bin\llvm-ar.exe" x $libPath
-              
-              # Compress each object file
-              Get-ChildItem -Filter "*.obj" | ForEach-Object {
-                & $strip --strip-unneeded $_.FullName 2>$null
-                & ./upx.exe --best --lzma --brute $_.FullName 2>$null
-              }
-              
-              # Recreate the library
-              Remove-Item $libPath -Force
-              & "${env:ProgramFiles}\LLVM\bin\llvm-ar.exe" rcs $libPath *.obj
-              
-              # If still too large, use 7z
-              $sizeMB = [math]::Round((Get-Item $libPath).Length / 1MB, 2)
-              if ($sizeMB -gt 90) {
-                Write-Host "Using 7z compression for $libName"
-                $tempFile = "$libPath.tmp"
-                & 7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on $tempFile $libPath
-                Move-Item $tempFile $libPath -Force
-              }
-              
-              Pop-Location
-            } finally {
-              Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
-            }
-          }
-          
           # Ultra compression for all files
           Get-ChildItem artifacts/windows-x64/lib -File | ForEach-Object {
             $sizeMB = [math]::Round($_.Length / 1MB, 2)
@@ -140,7 +93,39 @@ jobs:
             
             if ($_.Extension -eq ".lib") {
               # For static libraries, extract and compress object files
-              compress_static_lib -libPath $_.FullName
+              $libName = $_.Name
+              $libPath = $_.FullName
+              $tempDir = Join-Path $env:TEMP "compress_$(Get-Random)"
+              New-Item -ItemType Directory -Path $tempDir -Force
+              
+              try {
+                # Use llvm-ar to extract object files
+                Push-Location $tempDir
+                & "${env:ProgramFiles}\LLVM\bin\llvm-ar.exe" x $libPath
+                
+                # Compress each object file
+                Get-ChildItem -Filter "*.obj" | ForEach-Object {
+                  & $strip --strip-unneeded $_.FullName 2>$null
+                  & ./upx.exe --best --lzma --brute $_.FullName 2>$null
+                }
+                
+                # Recreate library
+                Remove-Item $libPath -Force
+                & "${env:ProgramFiles}\LLVM\bin\llvm-ar.exe" rcs $libPath *.obj
+                
+                # If still too large, use 7z
+                $newSizeMB = [math]::Round((Get-Item $libPath).Length / 1MB, 2)
+                if ($newSizeMB -gt 90) {
+                  Write-Host "Using 7z compression for $libName"
+                  $tempFile = "$libPath.tmp"
+                  & 7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on $tempFile $libPath
+                  Move-Item $tempFile $libPath -Force
+                }
+                
+                Pop-Location
+              } finally {
+                Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+              }
             } elseif ($_.Extension -eq ".dll") {
               # For DLLs, compress directly
               & ./upx.exe --best --lzma --brute $_.FullName
