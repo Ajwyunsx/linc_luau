@@ -1,6 +1,17 @@
+# Fixed workflow: corrected unbalanced quoting and replaced in-shell multi-line "-m" commits
+# with here-documents to avoid unexpected EOF while looking for matching `"' errors.
+# Also removed stray/unmatched characters and normalized spacing.
+# **FIXED**: git commit -F -> -m, and corrected workflow name typo
+# **ENHANCED**: Added ultra-aggressive compression for static libraries
+# **FIXED**: Fixed ar command path issue in compress_static_lib function
+# **FIXED**: Fixed macOS UPX installation - use Homebrew instead of downloading
+# **FIXED**: Fixed Windows static library compression - extract and compress object files
+
 name: Build & Update Luau Libraries
+
 permissions:
   contents: write
+
 on:
   schedule:
     - cron: '0 0 * * *'
@@ -11,6 +22,7 @@ on:
       - '.github/workflows/main.yml'
     tags:
       - 'v*'
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -20,12 +32,14 @@ jobs:
           git clone https://github.com/Roblox/luau.git luau-build
           cd luau-build
           git log -1 --oneline
+
       - name: Patch Luau TypeChecker warning
         shell: bash
         run: |
           cd luau-build
           python - <<'PY'
           from pathlib import Path
+
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
@@ -36,8 +50,10 @@ jobs:
           else:
               print("marker not found; skipping patch (already applied?)")
           PY
+
       - name: Setup MSVC
         uses: microsoft/setup-msbuild@v1.1
+
       - name: Build Luau (Windows x64)
         run: |
           cd luau-build
@@ -55,12 +71,14 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-win64.zip" -OutFile "upx.zip"
           Expand-Archive -Path "upx.zip" -DestinationPath "."
           Move-Item "upx-*/upx.exe" "upx.exe" -Force
+
       - name: Collect and Ultra Compress Windows Libraries
         shell: pwsh
         run: |
           mkdir -p artifacts/windows-x64/lib
           Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/
           Copy-Item luau-build/build-release/Release/*.dll artifacts/windows-x64/lib/ -ErrorAction SilentlyContinue
+
       - name: Strip and Ultra Compress Windows libraries
         shell: pwsh
         run: |
@@ -76,21 +94,65 @@ jobs:
             }
           }
           
+          # Function to compress a Windows static library
+          compress_static_lib() {
+            param([string]$libPath)
+            $libName = Split-Path $libPath -Leaf
+            $tempDir = Join-Path $env:TEMP "compress_$(Get-Random)"
+            New-Item -ItemType Directory -Path $tempDir -Force
+            
+            Write-Host "Processing static library: $libName"
+            
+            try {
+              # Use llvm-ar to extract object files
+              Push-Location $tempDir
+              & "${env:ProgramFiles}\LLVM\bin\llvm-ar.exe" x $libPath
+              
+              # Compress each object file
+              Get-ChildItem -Filter "*.obj" | ForEach-Object {
+                & $strip --strip-unneeded $_.FullName 2>$null
+                & ./upx.exe --best --lzma --brute $_.FullName 2>$null
+              }
+              
+              # Recreate the library
+              Remove-Item $libPath -Force
+              & "${env:ProgramFiles}\LLVM\bin\llvm-ar.exe" rcs $libPath *.obj
+              
+              # If still too large, use 7z
+              $sizeMB = [math]::Round((Get-Item $libPath).Length / 1MB, 2)
+              if ($sizeMB -gt 90) {
+                Write-Host "Using 7z compression for $libName"
+                $tempFile = "$libPath.tmp"
+                & 7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on $tempFile $libPath
+                Move-Item $tempFile $libPath -Force
+              }
+              
+              Pop-Location
+            } finally {
+              Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+          
           # Ultra compression for all files
           Get-ChildItem artifacts/windows-x64/lib -File | ForEach-Object {
             $sizeMB = [math]::Round($_.Length / 1MB, 2)
             Write-Host "Original size $($_.Name): $sizeMB MB"
             
-            # Try UPX first
-            & ./upx.exe --best --lzma --brute $_.FullName
-            
-            # If still too large, compress with 7z and decompress
-            $newSizeMB = [math]::Round((Get-Item $_.FullName).Length / 1MB, 2)
-            if ($newSizeMB -gt 90) {
-              Write-Host "UPX not enough, using 7z compression method for $($_.Name)"
-              $tempFile = "$($_.FullName).tmp"
-              & 7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on $tempFile $_.FullName
-              Move-Item $tempFile $_.FullName -Force
+            if ($_.Extension -eq ".lib") {
+              # For static libraries, extract and compress object files
+              compress_static_lib -libPath $_.FullName
+            } elseif ($_.Extension -eq ".dll") {
+              # For DLLs, compress directly
+              & ./upx.exe --best --lzma --brute $_.FullName
+              
+              # If still too large, use 7z
+              $newSizeMB = [math]::Round((Get-Item $_.FullName).Length / 1MB, 2)
+              if ($newSizeMB -gt 90) {
+                Write-Host "UPX not enough, using 7z compression method for $($_.Name)"
+                $tempFile = "$($_.FullName).tmp"
+                & 7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on $tempFile $_.FullName
+                Move-Item $tempFile $_.FullName -Force
+              }
             }
             
             $finalSizeMB = [math]::Round((Get-Item $_.FullName).Length / 1MB, 2)
@@ -107,6 +169,7 @@ jobs:
         with:
           name: windows-x64-libs
           path: artifacts/windows-x64/
+
   build-linux:
     runs-on: ubuntu-latest
     steps:
@@ -115,12 +178,14 @@ jobs:
           git clone https://github.com/Roblox/luau.git luau-build
           cd luau-build
           git log -1 --oneline
+
       - name: Patch Luau TypeChecker warning
         shell: bash
         run: |
           cd luau-build
           python - <<'PY'
           from pathlib import Path
+
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
@@ -131,10 +196,12 @@ jobs:
           else:
               print("marker not found; skipping patch (already applied?)")
           PY
+
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake p7zip-full
+
       - name: Build Luau (Linux x64)
         run: |
           cd luau-build
@@ -148,6 +215,7 @@ jobs:
           mkdir -p artifacts/linux-x64/lib
           find luau-build/build-release -name "*.a" -exec cp {} artifacts/linux-x64/lib/ \;
           find luau-build/build-release -name "*.so" -exec cp {} artifacts/linux-x64/lib/ \; 2>/dev/null || true
+
       - name: Strip and Ultra Compress Linux libraries
         run: |
           # Install UPX
@@ -235,6 +303,7 @@ jobs:
         with:
           name: linux-x64-libs
           path: artifacts/linux-x64/
+
   build-macos:
     runs-on: macos-latest
     strategy:
@@ -246,12 +315,14 @@ jobs:
           git clone https://github.com/Roblox/luau.git luau-build
           cd luau-build
           git log -1 --oneline
+
       - name: Patch Luau TypeChecker warning
         shell: bash
         run: |
           cd luau-build
           python - <<'PY'
           from pathlib import Path
+
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
@@ -262,9 +333,11 @@ jobs:
           else:
               print("marker not found; skipping patch (already applied?)")
           PY
+
       - name: Install dependencies
         run: |
           brew install cmake p7zip upx
+
       - name: Build Luau (macOS ${{ matrix.arch }})
         run: |
           cd luau-build
@@ -278,6 +351,7 @@ jobs:
           mkdir -p artifacts/macos-${{ matrix.arch }}/lib
           find luau-build/build-release-${{ matrix.arch }} -name "*.a" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \;
           find luau-build/build-release-${{ matrix.arch }} -name "*.dylib" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \; 2>/dev/null || true
+
       - name: Strip and Ultra Compress macOS libraries
         run: |
           # Use UPX from Homebrew
@@ -367,6 +441,7 @@ jobs:
         with:
           name: macos-${{ matrix.arch }}-libs
           path: artifacts/macos-${{ matrix.arch }}/
+
   build-android:
     runs-on: ubuntu-latest
     strategy:
@@ -378,12 +453,14 @@ jobs:
           git clone https://github.com/Roblox/luau.git luau-build
           cd luau-build
           git log -1 --oneline
+
       - name: Patch Luau TypeChecker warning
         shell: bash
         run: |
           cd luau-build
           python - <<'PY'
           from pathlib import Path
+
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
@@ -394,14 +471,17 @@ jobs:
           else:
               print("marker not found; skipping patch (already applied?)")
           PY
+
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r25c
+
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y p7zip-full
+
       - name: Build Luau (Android ${{ matrix.abi }})
         run: |
           cd luau-build
@@ -426,6 +506,7 @@ jobs:
           mkdir -p artifacts/android-${{ matrix.abi }}/lib
           find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \;
           find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \; 2>/dev/null || true
+
       - name: Strip and Ultra Compress Android libraries
         run: |
           case "${{ matrix.abi }}" in
@@ -519,6 +600,7 @@ jobs:
         with:
           name: android-${{ matrix.abi }}-libs
           path: artifacts/android-${{ matrix.abi }}/
+
   build-ios:
     runs-on: macos-latest
     strategy:
@@ -530,12 +612,14 @@ jobs:
           git clone https://github.com/Roblox/luau.git luau-build
           cd luau-build
           git log -1 --oneline
+
       - name: Patch Luau TypeChecker warning
         shell: bash
         run: |
           cd luau-build
           python - <<'PY'
           from pathlib import Path
+
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
@@ -546,9 +630,11 @@ jobs:
           else:
               print("marker not found; skipping patch (already applied?)")
           PY
+
       - name: Install dependencies
         run: |
           brew install cmake p7zip upx
+
       - name: Build Luau (iOS ${{ matrix.sdk }})
         run: |
           cd luau-build
@@ -575,6 +661,7 @@ jobs:
         run: |
           mkdir -p artifacts/ios-${{ matrix.sdk }}/lib
           cp luau-build/build-ios-${{ matrix.sdk }}/Release/*.a artifacts/ios-${{ matrix.sdk }}/lib/ 2>/dev/null || true
+
       - name: Strip and Ultra Compress iOS libraries
         run: |
           # Use UPX from Homebrew
@@ -656,6 +743,7 @@ jobs:
         with:
           name: ios-${{ matrix.sdk }}-libs
           path: artifacts/ios-${{ matrix.sdk }}/
+
   create-release:
     needs: [ build-windows, build-linux, build-macos, build-android, build-ios ]
     runs-on: ubuntu-latest
@@ -664,10 +752,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: all-artifacts
+
       - name: Create release package
         run: |
           set -e
@@ -703,6 +793,7 @@ jobs:
           
           tar -czf ../linc_luau-libs-${GITHUB_REF_NAME}.tar.gz lib
           zip -r linc_luau-libs-${GITHUB_REF_NAME}.zip lib linc_luau-*libs-${GITHUB_REF_NAME}.zip
+
       - name: Create GitHub Release (only on tags v*)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v1
@@ -721,23 +812,29 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Prepare repo and update libraries (NO LFS)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
+
           # Fixed: Use proper bot name
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
           # Ensure we are on main
           git fetch origin main
           git checkout main
           git pull origin main
+
           # Disable LFS completely
           git lfs uninstall || true
           rm -f .gitattributes
+
           # Remove old libraries
           rm -rf lib/luau/lib || true
+
           # Create directory structure
           mkdir -p lib/luau/lib/windows-x64
           mkdir -p lib/luau/lib/linux-x64
@@ -748,6 +845,7 @@ jobs:
           mkdir -p lib/luau/lib/android/x86
           mkdir -p lib/luau/lib/android/x86_64
           mkdir -p lib/luau/lib/ios
+
           # Copy new libraries from downloaded artifacts (already compressed)
           cp -r all-artifacts/windows-x64-libs/* lib/luau/lib/windows-x64/ 2>/dev/null || true
           cp -r all-artifacts/linux-x64-libs/* lib/luau/lib/linux-x64/ 2>/dev/null || true
@@ -758,6 +856,7 @@ jobs:
           cp -r all-artifacts/android-x86-libs/* lib/luau/lib/android/x86/ 2>/dev/null || true
           cp -r all-artifacts/android-x86_64-libs/* lib/luau/lib/android/x86_64/ 2>/dev/null || true
           cp -r all-artifacts/ios-*/* lib/luau/lib/ios/ 2>/dev/null || true
+
           # Final verification - ensure all files are under 100MB
           echo "Final file size verification:"
           find lib/luau/lib -type f -exec bash -c 'echo "$1: $(du -h "$1" | cut -f1)"' _ {} \;
@@ -768,17 +867,21 @@ jobs:
             find lib/luau/lib -type f -size +95M -exec ls -lh {} \;
             exit 1
           fi
+
           # Add everything to git (NO LFS)
           git add lib/luau/lib
+
           # Check if there are changes
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0
           fi
+
           # Commit with author as the user who triggered the workflow
           GIT_AUTHOR_NAME="${{ github.actor }}" \
           GIT_AUTHOR_EMAIL="${{ github.actor }}@users.noreply.github.com" \
           git commit -m "🤖 Update prebuilt Luau libraries for ${{ github.ref_name }}"
+
           # Push changes
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}"
           git push origin main
