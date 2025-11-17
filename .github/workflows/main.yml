@@ -75,6 +75,9 @@ jobs:
         shell: pwsh
         run: |
           $strip = "${env:ProgramFiles}\LLVM\bin\llvm-strip.exe"
+          $upxPath = Join-Path $PWD "upx.exe"
+          $arPath = "${env:ProgramFiles}\LLVM\bin\llvm-ar.exe"
+          
           if (Test-Path $strip) {
             Get-ChildItem artifacts/windows-x64/lib -Filter "*.lib" | ForEach-Object { 
               & $strip --strip-debug $_.FullName 
@@ -101,17 +104,17 @@ jobs:
               try {
                 # Use llvm-ar to extract object files
                 Push-Location $tempDir
-                & "${env:ProgramFiles}\LLVM\bin\llvm-ar.exe" x $libPath
+                & $arPath x $libPath
                 
                 # Compress each object file
                 Get-ChildItem -Filter "*.obj" | ForEach-Object {
                   & $strip --strip-unneeded $_.FullName 2>$null
-                  & ./upx.exe --best --lzma --brute $_.FullName 2>$null
+                  & $upxPath --best --lzma --brute $_.FullName 2>$null
                 }
                 
                 # Recreate library
                 Remove-Item $libPath -Force
-                & "${env:ProgramFiles}\LLVM\bin\llvm-ar.exe" rcs $libPath *.obj
+                & $arPath rcs $libPath *.obj
                 
                 # If still too large, use 7z
                 $newSizeMB = [math]::Round((Get-Item $libPath).Length / 1MB, 2)
@@ -128,7 +131,7 @@ jobs:
               }
             } elseif ($_.Extension -eq ".dll") {
               # For DLLs, compress directly
-              & ./upx.exe --best --lzma --brute $_.FullName
+              & $upxPath --best --lzma --brute $_.FullName
               
               # If still too large, use 7z
               $newSizeMB = [math]::Round((Get-Item $_.FullName).Length / 1MB, 2)
