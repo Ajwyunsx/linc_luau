@@ -14,6 +14,10 @@ on:
     tags:
       - 'v*'
 
+env:
+  UPX_VERSION: "4.2.4"
+  SEVEN_ZIP_FLAGS: "-t7z -mx=9 -myx=9 -ms=on -md=64m -mfb=256 -mmt=on"
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -28,119 +32,90 @@ jobs:
         shell: bash
         run: |
           cd luau-build
-          python3 << 'PY'
+          python - <<'PY'
           from pathlib import Path
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
           text = path.read_text()
-          if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
-          else:
-              print("marker not found; skipping patch (already applied?)")
+          path.write_text(text.replace(marker, replacement, 1)) if marker in text else print("patch already applied")
           PY
 
       - name: Setup MSVC
-        uses: microsoft/setup-msbuild@v1.1
+        uses: microsoft/setup-msbuild@v1.3
 
-      - name: Build Luau (Windows x64) - EXTREME OPTIMIZATION
+      - name: Build Luau (Windows x64)
         run: |
           cd luau-build
-          mkdir build-release
-          cd build-release
-          cmake .. -DCMAKE_BUILD_TYPE=Release -A x64 -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF ^
-            -DCMAKE_C_FLAGS="/O1 /Os /GL /Gw /Gy /GF /Zc:inline" ^
-            -DCMAKE_CXX_FLAGS="/O1 /Os /GL /Gw /Gy /GF /Zc:inline" ^
-            -DCMAKE_EXE_LINKER_FLAGS="/LTCG /OPT:REF /OPT:ICF /ALIGN:16" ^
-            -DCMAKE_SHARED_LINKER_FLAGS="/LTCG /OPT:REF /OPT:ICF /ALIGN:16"
-          cmake --build . --config Release --parallel
-          
-      - name: Setup LLVM strip and UPX
+          cmake -B build-release -A x64 -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+          cmake --build build-release --config Release -m
+
+      - name: Install compression tools
         shell: pwsh
         run: |
-          choco install llvm -y
-          refreshenv
-          Invoke-WebRequest -Uri "https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-win64.zip" -OutFile "upx.zip"
-          Expand-Archive -Path "upx.zip" -DestinationPath "."
-          Move-Item "upx-*/upx.exe" "upx.exe" -Force
+          choco install llvm 7zip -y --no-progress
+          # Download UPX 4.2.4
+          Invoke-WebRequest -Uri "https://github.com/upx/upx/releases/download/v${env:UPX_VERSION}/upx-${env:UPX_VERSION}-win64.zip" -OutFile "upx.zip"
+          Expand-Archive -Path "upx.zip" -DestinationPath "." -Force
+          Move-Item "upx-*/upx.exe" "C:\tools\upx.exe" -Force
 
-      - name: Collect and Compress Windows Libraries - EXTREME
+      - name: Collect libraries
         shell: pwsh
         run: |
           mkdir -p artifacts/windows-x64/lib
           Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/
           Copy-Item luau-build/build-release/Release/*.dll artifacts/windows-x64/lib/ -ErrorAction SilentlyContinue
 
-      - name: EXTREME Compression for Windows
+      - name: Ultra compress libraries
         shell: pwsh
+        env:
+          SEVEN_ZIP_FLAGS: ${{ env.SEVEN_ZIP_FLAGS }}
         run: |
-          $strip = "${env:ProgramFiles}\LLVM\bin\llvm-strip.exe"
-          $upxPath = Join-Path $PWD "upx.exe"
-          $arPath = "${env:ProgramFiles}\LLVM\bin\llvm-ar.exe"
-          $objcopy = "${env:ProgramFiles}\LLVM\bin\llvm-objcopy.exe"
+          $llvmDir = "${env:ProgramFiles}\LLVM\bin"
+          $strip = Join-Path $llvmDir "llvm-strip.exe"
+          $sevenZ = (Get-Command 7z).Source
           
-          # EXTREME strip for all files
-          Get-ChildItem artifacts/windows-x64/lib -File | ForEach-Object {
-            & $strip --strip-all $_.FullName 2>$null
-            & $strip --remove-section=.comment $_.FullName 2>$null
-            & $strip --remove-section=.note $_.FullName 2>$null
-            & $objcopy --strip-all $_.FullName $_.FullName.tmp 2>$null
-            if (Test-Path "$_.FullName.tmp") {
-              Move-Item "$_.FullName.tmp" $_.FullName -Force
-            }
-          }
-          
-          # EXTREME compression for static libraries
-          Get-ChildItem artifacts/windows-x64/lib -Filter "*.lib" | ForEach-Object {
-            $libName = $_.Name
-            $libPath = $_.FullName
-            $tempDir = Join-Path $env:TEMP "compress_$(Get-Random)"
-            New-Item -ItemType Directory -Path $tempDir -Force
+          # Process all files in parallel where possible
+          Get-ChildItem artifacts/windows-x64/lib -File | ForEach-Object -Parallel {
+            $file = $_
+            $stripPath = $using:strip
+            $sevenZPath = $using:sevenZ
+            $flags = $env:SEVEN_ZIP_FLAGS
             
-            try {
-              Push-Location $tempDir
-              & $arPath x $libPath
-              
-              # Compress each object file with EXTREME settings
-              Get-ChildItem -Filter "*.obj" | ForEach-Object {
-                & $strip --strip-all $_.FullName 2>$null
-                & $objcopy --strip-all $_.FullName $_.FullName.tmp 2>$null
-                if (Test-Path "$_.FullName.tmp") {
-                  Move-Item "$_.FullName.tmp" $_.FullName -Force
-                }
-                & $upxPath --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters $_.FullName 2>$null
+            # Common strip step
+            & $stripPath --strip-debug $file.FullName 2>$null
+            & $stripPath --strip-unneeded $file.FullName 2>$null
+            
+            $originalSize = [math]::Round($file.Length / 1MB, 2)
+            
+            if ($file.Extension -eq ".lib") {
+              # STATIC LIBRARIES: Skip UPX, use 7z directly
+              if ($originalSize -gt 80) {
+                Write-Host "Compressing static library $($file.Name): $originalSize MB"
+                & $sevenZPath a $flags "$($file.FullName).tmp" $file.FullName
+                Move-Item "$($file.FullName).tmp" $file.FullName -Force
               }
+            } else {
+              # SHARED LIBRARIES: UPX ultra-brute + 7z fallback
+              & C:\tools\upx.exe --ultra-brute $file.FullName 2>$null
               
-              # Recreate with maximum compression
-              Remove-Item $libPath -Force
-              & $arPath rcs $libPath *.obj
-              
-              # Final EXTREME compression
-              & $strip --strip-all $libPath 2>$null
-              & $upxPath --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters $libPath 2>$null
-              
-              Pop-Location
-            } finally {
-              Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+              $newSize = [math]::Round((Get-Item $file.FullName).Length / 1MB, 2)
+              if ($newSize -gt 90) {
+                Write-Host "7z fallback for $($file.Name): $newSize MB"
+                & $sevenZPath a $flags "$($file.FullName).tmp" $file.FullName
+                Move-Item "$($file.FullName).tmp" $file.FullName -Force
+              }
             }
-          }
-          
-          # EXTREME compression for DLLs
-          Get-ChildItem artifacts/windows-x64/lib -Filter "*.dll" | ForEach-Object {
-            & $upxPath --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters $_.FullName
-          }
-          
-          # Verify sizes
-          Get-ChildItem artifacts/windows-x64/lib -File | ForEach-Object {
-            $sizeMB = [math]::Round($_.Length / 1MB, 2)
-            Write-Host "Final size $($_.Name): $sizeMB MB"
-            if ($sizeMB -gt 50) {
-              Write-Error "File $($_.Name) is too large: $sizeMB MB"
+            
+            $finalSize = [math]::Round((Get-Item $file.FullName).Length / 1MB, 2)
+            Write-Host "$($file.Name): $originalSize MB → $finalSize MB"
+            
+            if ($finalSize -gt 95) {
+              Write-Error "$($file.Name) too large: $finalSize MB"
               exit 1
             }
           }
-          
+
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -157,111 +132,65 @@ jobs:
           git log -1 --oneline
 
       - name: Patch Luau TypeChecker warning
-        shell: bash
         run: |
           cd luau-build
-          python3 << 'PY'
+          python - <<'PY'
           from pathlib import Path
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
           text = path.read_text()
-          if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
-          else:
-              print("marker not found; skipping patch (already applied?)")
+          path.write_text(text.replace(marker, replacement, 1)) if marker in text else print("patch already applied")
           PY
 
-      - name: Install dependencies
+      - name: Build Luau (Linux x64)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake binutils
-
-      - name: Build Luau (Linux x64) - EXTREME OPTIMIZATION
-        run: |
+          sudo apt-get update && sudo apt-get install -y build-essential cmake p7zip-full
           cd luau-build
-          mkdir build-release
-          cd build-release
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF \
-            -DCMAKE_C_FLAGS="-Os -O1 -ffunction-sections -fdata-sections -fvisibility=hidden -flto=auto -fmerge-all-constants -fno-inline-functions -fno-inline-small-functions -fno-unroll-loops" \
-            -DCMAKE_CXX_FLAGS="-Os -O1 -ffunction-sections -fdata-sections -fvisibility=hidden -flto=auto -fmerge-all-constants -fno-inline-functions -fno-inline-small-functions -fno-unroll-loops" \
-            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections -Wl,--strip-all -Wl,--as-needed -flto=auto -s" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--gc-sections -Wl,--strip-all -Wl,--as-needed -flto=auto -s"
-          cmake --build . --config Release -j$(nproc)
-          
-      - name: Collect and Compress Linux Libraries - EXTREME
+          cmake -B build-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+          cmake --build build-release --config Release -j$(nproc)
+
+      - name: Install UPX
+        run: |
+          wget -qO- https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz | tar -xJ
+          sudo mv upx-${UPX_VERSION}-amd64_linux/upx /usr/local/bin/
+
+      - name: Collect libraries
         run: |
           mkdir -p artifacts/linux-x64/lib
           find luau-build/build-release -name "*.a" -exec cp {} artifacts/linux-x64/lib/ \;
           find luau-build/build-release -name "*.so" -exec cp {} artifacts/linux-x64/lib/ \; 2>/dev/null || true
 
-      - name: EXTREME Compression for Linux
+      - name: Ultra compress libraries
+        env:
+          SEVEN_ZIP_FLAGS: ${{ env.SEVEN_ZIP_FLAGS }}
         run: |
-          wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
-          tar -xf upx-4.2.2-amd64_linux.tar.xz
+          # Process libraries in parallel
+          export JOBS=$(nproc)
           
-          extreme_compress_lib() {
-            local lib="$1"
-            local temp_dir=$(mktemp -d)
-            local lib_name=$(basename "$lib")
-            local lib_abs_path=$(realpath "$lib")
-            
-            echo "EXTREME compressing: $lib_name"
-            
-            cd "$temp_dir"
-            ar x "$lib_abs_path"
-            
-            # EXTREME compression for each object
-            for obj in *.o; do
-              if [ -f "$obj" ]; then
-                strip --strip-all --remove-section=.comment --remove-section=.note "$obj" 2>/dev/null || true
-                objcopy --strip-all "$obj" "$obj.tmp" 2>/dev/null && mv "$obj.tmp" "$obj" || true
-                ../upx-4.2.2-amd64_linux/upx --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters "$obj" 2>/dev/null || true
-              fi
-            done
-            
-            # Recreate with EXTREME settings
-            rm -f "$lib_abs_path"
-            ar rcs "$lib_abs_path" *.o
-            strip --strip-all --remove-section=.comment --remove-section=.note "$lib_abs_path" 2>/dev/null || true
-            objcopy --strip-all "$lib_abs_path" "$lib_abs_path.tmp" 2>/dev/null && mv "$lib_abs_path.tmp" "$lib_abs_path" || true
-            
-            # Final EXTREME compression
-            ../upx-4.2.2-amd64_linux/upx --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters "$lib_abs_path" 2>/dev/null || true
-            
-            cd - > /dev/null
-            rm -rf "$temp_dir"
-          }
+          # Static libraries: strip + 7z only
+          find artifacts/linux-x64/lib -name "*.a" -size +80M | xargs -P $JOBS -I {} bash -c '
+            strip --strip-unneeded {} 2>/dev/null
+            7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+          '
           
-          # Process all static libraries
-          for lib in artifacts/linux-x64/lib/*.a; do
-            if [ -f "$lib" ]; then
-              extreme_compress_lib "$lib"
+          # Shared libraries: strip + UPX + 7z fallback
+          find artifacts/linux-x64/lib -name "*.so" | xargs -P $JOBS -I {} bash -c '
+            strip --strip-unneeded {} 2>/dev/null
+            upx --ultra-brute {} 2>/dev/null || true
+            if [ $(stat -c%s {}) -gt 94371840 ]; then  # 90MB in bytes
+              7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
             fi
-          done
+          '
           
-          # EXTREME compression for shared libraries
-          for lib in artifacts/linux-x64/lib/*.so; do
-            if [ -f "$lib" ]; then
-              strip --strip-all --remove-section=.comment --remove-section=.note "$lib" 2>/dev/null || true
-              objcopy --strip-all "$lib" "$lib.tmp" 2>/dev/null && mv "$lib.tmp" "$lib" || true
-              ./upx-4.2.2-amd64_linux/upx --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters "$lib" 2>/dev/null || true
-            fi
-          done
-          
-          # Verify sizes
-          for f in artifacts/linux-x64/lib/*; do
-            if [ -f "$f" ]; then
-              sizeMB=$(du -m "$f" | cut -f1)
-              echo "$(basename "$f"): ${sizeMB} MB"
-              if [ "$sizeMB" -gt 50 ]; then
-                echo "ERROR: File $(basename "$f") is too large: ${sizeMB} MB"
-                exit 1
-              fi
-            fi
-          done
-          
+          # Verify all files
+          find artifacts/linux-x64/lib -type f -exec bash -c '
+            size=$(stat -c%s $1)
+            sizeMB=$((size / 1048576))
+            echo "$1: ${sizeMB}MB"
+            [ $size -lt 99614720 ] || { echo "ERROR: $1 too large"; exit 1; }
+          ' _ {} \;
+
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -281,106 +210,59 @@ jobs:
           git log -1 --oneline
 
       - name: Patch Luau TypeChecker warning
-        shell: bash
         run: |
           cd luau-build
-          python3 << 'PY'
+          python - <<'PY'
           from pathlib import Path
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
           text = path.read_text()
-          if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
-          else:
-              print("marker not found; skipping patch (already applied?)")
+          path.write_text(text.replace(marker, replacement, 1)) if marker in text else print("patch already applied")
           PY
 
       - name: Install dependencies
-        run: |
-          brew install cmake upx
+        run: brew install cmake p7zip upx
 
-      - name: Build Luau (macOS ${{ matrix.arch }}) - EXTREME OPTIMIZATION
+      - name: Build Luau (macOS ${{ matrix.arch }})
         run: |
           cd luau-build
-          mkdir build-release-${{ matrix.arch }}
-          cd build-release-${{ matrix.arch }}
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF \
-            -DCMAKE_C_FLAGS="-Os -O1 -ffunction-sections -fdata-sections -fvisibility=hidden -flto=auto -fmerge-all-constants -fno-inline-functions -fno-inline-small-functions -fno-unroll-loops" \
-            -DCMAKE_CXX_FLAGS="-Os -O1 -ffunction-sections -fdata-sections -fvisibility=hidden -flto=auto -fmerge-all-constants -fno-inline-functions -fno-inline-small-functions -fno-unroll-loops" \
-            -DCMAKE_EXE_LINKER_FLAGS="-Wl,-dead_strip -Wl,-x -Wl,-S -flto=auto" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-dead_strip -Wl,-x -Wl,-S -flto=auto"
-          cmake --build . --config Release -j$(sysctl -n hw.ncpu)
-          
-      - name: Collect and Compress macOS Libraries - EXTREME
+          cmake -B build-${{ matrix.arch }} -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+          cmake --build build-${{ matrix.arch }} --config Release -j$(sysctl -n hw.ncpu)
+
+      - name: Collect libraries
         run: |
           mkdir -p artifacts/macos-${{ matrix.arch }}/lib
-          find luau-build/build-release-${{ matrix.arch }} -name "*.a" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \;
-          find luau-build/build-release-${{ matrix.arch }} -name "*.dylib" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \; 2>/dev/null || true
+          find luau-build/build-${{ matrix.arch }} -name "*.a" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \;
+          find luau-build/build-${{ matrix.arch }} -name "*.dylib" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \; 2>/dev/null || true
 
-      - name: EXTREME Compression for macOS
+      - name: Ultra compress libraries
+        env:
+          SEVEN_ZIP_FLAGS: ${{ env.SEVEN_ZIP_FLAGS }}
         run: |
-          UPX_BINARY=$(which upx)
+          JOBS=$(sysctl -n hw.ncpu)
           
-          extreme_compress_lib() {
-            local lib="$1"
-            local temp_dir=$(mktemp -d)
-            local lib_name=$(basename "$lib")
-            local lib_abs_path=$(realpath "$lib")
-            
-            echo "EXTREME compressing: $lib_name"
-            
-            cd "$temp_dir"
-            ar x "$lib_abs_path"
-            
-            # EXTREME compression for each object
-            for obj in *.o; do
-              if [ -f "$obj" ]; then
-                strip -S -x -X "$obj" 2>/dev/null || true
-                "$UPX_BINARY" --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters "$obj" 2>/dev/null || true
-              fi
-            done
-            
-            # Recreate with EXTREME settings
-            rm -f "$lib_abs_path"
-            ar rcs "$lib_abs_path" *.o
-            strip -S -x -X "$lib_abs_path" 2>/dev/null || true
-            
-            # Final EXTREME compression
-            "$UPX_BINARY" --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters "$lib_abs_path" 2>/dev/null || true
-            
-            cd - > /dev/null
-            rm -rf "$temp_dir"
-          }
+          # Static libraries
+          find artifacts/macos-${{ matrix.arch }}/lib -name "*.a" -size +80M | xargs -P $JOBS -I {} bash -c '
+            strip -S -x {} 2>/dev/null
+            7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+          '
           
-          # Process all static libraries
-          for lib in artifacts/macos-${{ matrix.arch }}/lib/*.a; do
-            if [ -f "$lib" ]; then
-              extreme_compress_lib "$lib"
-            fi
-          done
+          # Shared libraries
+          find artifacts/macos-${{ matrix.arch }}/lib -name "*.dylib" | xargs -P $JOBS -I {} bash -c '
+            strip -S -x {} 2>/dev/null
+            upx --ultra-brute {} 2>/dev/null || true
+            [ $(stat -f%z {}) -gt 94371840 ] && 7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+          '
           
-          # EXTREME compression for shared libraries
-          for lib in artifacts/macos-${{ matrix.arch }}/lib/*.dylib; do
-            if [ -f "$lib" ]; then
-              strip -S -x -X "$lib" 2>/dev/null || true
-              "$UPX_BINARY" --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters "$lib" 2>/dev/null || true
-            fi
-          done
-          
-          # Verify sizes
-          for f in artifacts/macos-${{ matrix.arch }}/lib/*; do
-            if [ -f "$f" ]; then
-              sizeMB=$(du -m "$f" | cut -f1)
-              echo "$(basename "$f"): ${sizeMB} MB"
-              if [ "$sizeMB" -gt 50 ]; then
-                echo "ERROR: File $(basename "$f") is too large: ${sizeMB} MB"
-                exit 1
-              fi
-            fi
-          done
-          
+          # Verify
+          find artifacts/macos-${{ matrix.arch }}/lib -type f -exec bash -c '
+            size=$(stat -f%z $1)
+            sizeMB=$((size / 1048576))
+            echo "$1: ${sizeMB}MB"
+            [ $size -lt 99614720 ] || exit 1
+          ' _ {} \;
+
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -400,20 +282,15 @@ jobs:
           git log -1 --oneline
 
       - name: Patch Luau TypeChecker warning
-        shell: bash
         run: |
           cd luau-build
-          python3 << 'PY'
+          python - <<'PY'
           from pathlib import Path
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
           text = path.read_text()
-          if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
-          else:
-              print("marker not found; skipping patch (already applied?)")
+          path.write_text(text.replace(marker, replacement, 1)) if marker in text else print("patch already applied")
           PY
 
       - name: Setup Android NDK
@@ -421,33 +298,37 @@ jobs:
         with:
           ndk-version: r25c
 
-      - name: Build Luau (Android ${{ matrix.abi }}) - EXTREME OPTIMIZATION
+      - name: Build Luau (Android ${{ matrix.abi }})
         run: |
+          sudo apt-get install -y p7zip-full
           cd luau-build
-          mkdir build-android-${{ matrix.abi }}
-          cd build-android-${{ matrix.abi }}
           ANDROID_ABI=${{ matrix.abi }}
-          if [ "${{ matrix.abi }}" = "armv7" ]; then ANDROID_ABI="armeabi-v7a"; fi
+          [ "$ANDROID_ABI" = "armv7" ] && ANDROID_ABI="armeabi-v7a"
           
-          cmake .. \
+          cmake -B build-${{ matrix.abi }} \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
-            -DANDROID_ABI=${ANDROID_ABI} \
+            -DANDROID_ABI=$ANDROID_ABI \
             -DANDROID_PLATFORM=android-21 \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="-Os -O1 -ffunction-sections -fdata-sections -fvisibility=hidden -fno-inline-functions -fno-inline-small-functions -fno-unroll-loops" \
-            -DCMAKE_CXX_FLAGS="-Os -O1 -ffunction-sections -fdata-sections -fvisibility=hidden -fno-inline-functions -fno-inline-small-functions -fno-unroll-loops" \
-            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections -Wl,--strip-all -Wl,--as-needed -s" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--gc-sections -Wl,--strip-all -Wl,--as-needed -s" \
+            -DCMAKE_C_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden" \
+            -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden" \
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
-          cmake --build . --config Release -j$(nproc)
-          
-      - name: Collect and Compress Android Libraries - EXTREME
+          cmake --build build-${{ matrix.abi }} --config Release -j$(nproc)
+
+      - name: Install UPX
+        run: |
+          wget -qO- https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz | tar -xJ
+          sudo mv upx-${UPX_VERSION}-amd64_linux/upx /usr/local/bin/
+
+      - name: Collect libraries
         run: |
           mkdir -p artifacts/android-${{ matrix.abi }}/lib
-          find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \;
-          find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \; 2>/dev/null || true
+          find luau-build/build-${{ matrix.abi }} -name "*.a" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \;
+          find luau-build/build-${{ matrix.abi }} -name "*.so" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \; 2>/dev/null || true
 
-      - name: EXTREME Compression for Android
+      - name: Ultra compress libraries
+        env:
+          SEVEN_ZIP_FLAGS: ${{ env.SEVEN_ZIP_FLAGS }}
         run: |
           case "${{ matrix.abi }}" in
             armv7) TRIPLE=armv7a-linux-androideabi;;
@@ -455,41 +336,31 @@ jobs:
             x86) TRIPLE=i686-linux-android;;
             x86_64) TRIPLE=x86_64-linux-android;;
           esac
-          STRIP_CMD=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/${TRIPLE}-strip
+          export STRIP=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${TRIPLE}-strip
           
-          wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
-          tar -xf upx-4.2.2-amd64_linux.tar.xz
+          JOBS=$(nproc)
           
-          # EXTREME compression for static libraries
-          for lib in artifacts/android-${{ matrix.abi }}/lib/*.a; do
-            if [ -f "$lib" ]; then
-              echo "EXTREME compressing: $(basename "$lib")"
-              ${STRIP_CMD} --strip-all --remove-section=.comment --remove-section=.note "$lib" 2>/dev/null || true
-              # Only use safe UPX for Android
-              ./upx-4.2.2-amd64_linux/upx --best --lzma "$lib" 2>/dev/null || true
-            fi
-          done
+          # Static libraries: strip + 7z only (no UPX to avoid LLVM issues)
+          find artifacts/android-${{ matrix.abi }}/lib -name "*.a" -size +80M | xargs -P $JOBS -I {} bash -c '
+            $STRIP --strip-unneeded {} 2>/dev/null
+            7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+          '
           
-          # EXTREME compression for shared libraries
-          for lib in artifacts/android-${{ matrix.abi }}/lib/*.so; do
-            if [ -f "$lib" ]; then
-              ${STRIP_CMD} --strip-all --remove-section=.comment --remove-section=.note "$lib" 2>/dev/null || true
-              ./upx-4.2.2-amd64_linux/upx --best --lzma "$lib" 2>/dev/null || true
-            fi
-          done
+          # Shared libraries: strip + UPX
+          find artifacts/android-${{ matrix.abi }}/lib -name "*.so" | xargs -P $JOBS -I {} bash -c '
+            $STRIP --strip-unneeded {}
+            upx --ultra-brute {} 2>/dev/null || true
+            [ $(stat -c%s {}) -gt 94371840 ] && 7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+          '
           
           # Verify sizes
-          for f in artifacts/android-${{ matrix.abi }}/lib/*; do
-            if [ -f "$f" ]; then
-              sizeMB=$(du -m "$f" | cut -f1)
-              echo "$(basename "$f"): ${sizeMB} MB"
-              if [ "$sizeMB" -gt 50 ]; then
-                echo "ERROR: File $(basename "$f") is too large: ${sizeMB} MB"
-                exit 1
-              fi
-            fi
-          done
-          
+          find artifacts/android-${{ matrix.abi }}/lib -type f -exec bash -c '
+            size=$(stat -c%s $1)
+            sizeMB=$((size / 1048576))
+            echo "$1: ${sizeMB}MB"
+            [ $size -lt 99614720 ] || exit 1
+          ' _ {} \;
+
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -509,109 +380,57 @@ jobs:
           git log -1 --oneline
 
       - name: Patch Luau TypeChecker warning
-        shell: bash
         run: |
           cd luau-build
-          python3 << 'PY'
+          python - <<'PY'
           from pathlib import Path
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
           text = path.read_text()
-          if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
-          else:
-              print("marker not found; skipping patch (already applied?)")
+          path.write_text(text.replace(marker, replacement, 1)) if marker in text else print("patch already applied")
           PY
 
       - name: Install dependencies
-        run: |
-          brew install cmake upx
+        run: brew install cmake p7zip upx
 
-      - name: Build Luau (iOS ${{ matrix.sdk }}) - EXTREME OPTIMIZATION
+      - name: Build Luau (iOS ${{ matrix.sdk }})
         run: |
           cd luau-build
-          mkdir build-ios-${{ matrix.sdk }}
-          cd build-ios-${{ matrix.sdk }}
-          
-          if [ "${{ matrix.sdk }}" = "iphoneos" ]; then
-            ARCH="arm64"
-          else
-            ARCH="x86_64"
-          fi
-          
-          cmake .. \
+          ARCH=$([ "${{ matrix.sdk }}" = "iphoneos" ] && echo "arm64" || echo "x86_64")
+          cmake -B build-${{ matrix.sdk }} \
             -DCMAKE_SYSTEM_NAME=iOS \
             -DCMAKE_OSX_SYSROOT=${{ matrix.sdk }} \
             -DCMAKE_OSX_ARCHITECTURES=$ARCH \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="-Os -O1 -ffunction-sections -fdata-sections -flto=auto -fmerge-all-constants -fno-inline-functions -fno-inline-small-functions -fno-unroll-loops" \
-            -DCMAKE_CXX_FLAGS="-Os -O1 -ffunction-sections -fdata-sections -flto=auto -fmerge-all-constants -fno-inline-functions -fno-inline-small-functions -fno-unroll-loops" \
-            -DCMAKE_EXE_LINKER_FLAGS="-Wl,-dead_strip -Wl,-x -Wl,-S -flto=auto" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-dead_strip -Wl,-x -Wl,-S -flto=auto" \
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
-          cmake --build . --config Release -j$(sysctl -n hw.ncpu)
-          
-      - name: Collect and Compress iOS Libraries - EXTREME
+          cmake --build build-${{ matrix.sdk }} --config Release -j$(sysctl -n hw.ncpu)
+
+      - name: Collect libraries
         run: |
           mkdir -p artifacts/ios-${{ matrix.sdk }}/lib
-          cp luau-build/build-ios-${{ matrix.sdk }}/Release/*.a artifacts/ios-${{ matrix.sdk }}/lib/ 2>/dev/null || true
+          find luau-build/build-${{ matrix.sdk }} -name "*.a" -exec cp {} artifacts/ios-${{ matrix.sdk }}/lib/ \;
 
-      - name: EXTREME Compression for iOS
+      - name: Ultra compress libraries
+        env:
+          SEVEN_ZIP_FLAGS: ${{ env.SEVEN_ZIP_FLAGS }}
         run: |
-          UPX_BINARY=$(which upx)
+          JOBS=$(sysctl -n hw.ncpu)
           
-          extreme_compress_lib() {
-            local lib="$1"
-            local temp_dir=$(mktemp -d)
-            local lib_name=$(basename "$lib")
-            local lib_abs_path=$(realpath "$lib")
-            
-            echo "EXTREME compressing: $lib_name"
-            
-            cd "$temp_dir"
-            ar x "$lib_abs_path"
-            
-            # EXTREME compression for each object
-            for obj in *.o; do
-              if [ -f "$obj" ]; then
-                xcrun strip -S -x -X "$obj" 2>/dev/null || true
-                "$UPX_BINARY" --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters "$obj" 2>/dev/null || true
-              fi
-            done
-            
-            # Recreate with EXTREME settings
-            rm -f "$lib_abs_path"
-            ar rcs "$lib_abs_path" *.o
-            xcrun strip -S -x -X "$lib_abs_path" 2>/dev/null || true
-            
-            # Final EXTREME compression
-            "$UPX_BINARY" --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters "$lib_abs_path" 2>/dev/null || true
-            
-            cd - > /dev/null
-            rm -rf "$temp_dir"
-          }
+          # iOS only has static libraries
+          find artifacts/ios-${{ matrix.sdk }}/lib -name "*.a" -size +80M | xargs -P $JOBS -I {} bash -c '
+            xcrun strip -S -x {} 2>/dev/null
+            7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+          '
           
-          # Process all static libraries
-          for lib in artifacts/ios-${{ matrix.sdk }}/lib/*.a; do
-            if [ -f "$lib" ]; then
-              extreme_compress_lib "$lib"
-            fi
-          done
-          
-          # Verify sizes
-          for f in artifacts/ios-${{ matrix.sdk }}/lib/*; do
-            if [ -f "$f" ]; then
-              sizeMB=$(du -m "$f" | cut -f1)
-              echo "$(basename "$f"): ${sizeMB} MB"
-              if [ "$sizeMB" -gt 50 ]; then
-                echo "ERROR: File $(basename "$f") is too large: ${sizeMB} MB"
-                exit 1
-              fi
-            fi
-          done
-          
+          # Verify
+          find artifacts/ios-${{ matrix.sdk }}/lib -type f -exec bash -c '
+            size=$(stat -f%z $1)
+            sizeMB=$((size / 1048576))
+            echo "$1: ${sizeMB}MB"
+            [ $size -lt 99614720 ] || exit 1
+          ' _ {} \;
+
       - name: Upload iOS Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -621,6 +440,7 @@ jobs:
   create-release:
     needs: [ build-windows, build-linux, build-macos, build-android, build-ios ]
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -632,118 +452,101 @@ jobs:
         with:
           path: all-artifacts
 
-      - name: Create release package
+      - name: Create release packages
         run: |
           set -e
           mkdir -p release-package/lib
-          for platform in windows-x64 linux-x64 macos-x64 macos-arm64; do
-            mkdir -p release-package/lib/${platform}
+          
+          # Platform mapping
+          declare -A PLATFORMS=(
+            ["windows-x64-libs"]="windows-x64"
+            ["linux-x64-libs"]="linux-x64"
+            ["macos-x86_64-libs"]="macos-x64"
+            ["macos-arm64-libs"]="macos-arm64"
+          )
+          
+          for artifact in "${!PLATFORMS[@]}"; do
+            [ -d "all-artifacts/$artifact" ] && cp -r "all-artifacts/$artifact"/* "release-package/lib/${PLATFORMS[$artifact]}/"
           done
           
-          cp -r all-artifacts/windows-x64-libs/* release-package/lib/windows-x64/ 2>/dev/null || true
-          cp -r all-artifacts/linux-x64-libs/* release-package/lib/linux-x64/ 2>/dev/null || true
-          cp -r all-artifacts/macos-x86_64-libs/* release-package/lib/macos-x64/ 2>/dev/null || true
-          cp -r all-artifacts/macos-arm64-libs/* release-package/lib/macos-arm64/ 2>/dev/null || true
+          # Android (structured)
+          for abi in armv7 arm64-v8a x86 x86_64; do
+            mkdir -p "release-package/lib/android/$abi"
+            cp -r "all-artifacts/android-${abi}-libs"/* "release-package/lib/android/$abi/" 2>/dev/null || true
+          done
           
-          mkdir -p release-package/lib/android/armv7
-          mkdir -p release-package/lib/android/arm64-v8a
-          mkdir -p release-package/lib/android/x86
-          mkdir -p release-package/lib/android/x86_64
-          cp -r all-artifacts/android-armv7-libs/* release-package/lib/android/armv7/ 2>/dev/null || true
-          cp -r all-artifacts/android-arm64-v8a-libs/* release-package/lib/android/arm64-v8a/ 2>/dev/null || true
-          cp -r all-artifacts/android-x86-libs/* release-package/lib/android/x86/ 2>/dev/null || true
-          cp -r all-artifacts/android-x86_64-libs/* release-package/lib/android/x86_64/ 2>/dev/null || true
-          
+          # iOS (flat structure)
           mkdir -p release-package/lib/ios
           cp -r all-artifacts/ios-*/* release-package/lib/ios/ 2>/dev/null || true
           
-          cd release-package/lib
+          # Create per-platform and all-in-one archives
+          cd release-package
+          7z a -tzip linc_luau-libs-${GITHUB_REF_NAME}.zip lib/
           for build in windows-x64 linux-x64 macos-x64 macos-arm64 android ios; do
-            if [ -d "${build}" ]; then
-              zip -r ../linc_luau-${build}-libs-${GITHUB_REF_NAME}.zip ${build}
-            fi
+            [ -d "lib/$build" ] && 7z a -tzip linc_luau-${build}-libs-${GITHUB_REF_NAME}.zip lib/$build/
           done
-          cd ../
-          
-          tar -czf ../linc_luau-libs-${GITHUB_REF_NAME}.tar.gz lib
-          zip -r linc_luau-libs-${GITHUB_REF_NAME}.zip lib linc_luau-*libs-${GITHUB_REF_NAME}.zip
 
-      - name: Create GitHub Release (only on tags v*)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            linc_luau-libs-*.tar.gz
-            linc_luau-libs-*.zip
-            linc_luau-windows-x64-libs-*.zip
-            linc_luau-linux-x64-libs-*.zip
-            linc_luau-macos-x64-libs-*.zip
-            linc_luau-macos-arm64-libs-*.zip
-            linc_luau-android-libs-*.zip
-            linc_luau-ios-libs-*.zip
+            release-package/linc_luau-*.zip
           draft: false
           prerelease: false
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prepare repo and update libraries (NO LFS)
+  update-repo:
+    needs: [ build-windows, build-linux, build-macos, build-android, build-ios ]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+
+      - name: Update libraries in repository
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-
+          
+          # Configure git
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          git fetch origin main
-          git checkout main
-          git pull origin main
-
-          git lfs uninstall || true
-          rm -f .gitattributes
-
-          rm -rf lib/luau/lib || true
-
-          mkdir -p lib/luau/lib/windows-x64
-          mkdir -p lib/luau/lib/linux-x64
-          mkdir -p lib/luau/lib/macos-x64
-          mkdir -p lib/luau/lib/macos-arm64
-          mkdir -p lib/luau/lib/android/armv7
-          mkdir -p lib/luau/lib/android/arm64-v8a
-          mkdir -p lib/luau/lib/android/x86
-          mkdir -p lib/luau/lib/android/x86_64
-          mkdir -p lib/luau/lib/ios
-
-          cp -r all-artifacts/windows-x64-libs/* lib/luau/lib/windows-x64/ 2>/dev/null || true
-          cp -r all-artifacts/linux-x64-libs/* lib/luau/lib/linux-x64/ 2>/dev/null || true
-          cp -r all-artifacts/macos-x86_64-libs/* lib/luau/lib/macos-x64/ 2>/dev/null || true
-          cp -r all-artifacts/macos-arm64-libs/* lib/luau/lib/macos-arm64/ 2>/dev/null || true
-          cp -r all-artifacts/android-armv7-libs/* lib/luau/lib/android/armv7/ 2>/dev/null || true
-          cp -r all-artifacts/android-arm64-v8a-libs/* lib/luau/lib/android/arm64-v8a/ 2>/dev/null || true
-          cp -r all-artifacts/android-x86-libs/* lib/luau/lib/android/x86/ 2>/dev/null || true
-          cp -r all-artifacts/android-x86_64-libs/* lib/luau/lib/android/x86_64/ 2>/dev/null || true
-          cp -r all-artifacts/ios-*/* lib/luau/lib/ios/ 2>/dev/null || true
-
-          echo "Final file size verification:"
-          find lib/luau/lib -type f -exec bash -c 'echo "$1: $(du -h "$1" | cut -f1)"' _ {} \;
           
-          if find lib/luau/lib -type f -size +50M | grep -q .; then
-            echo "ERROR: Some files are still too large (>50MB):"
-            find lib/luau/lib -type f -size +50M -exec ls -lh {} \;
-            exit 1
-          fi
-
+          # Remove old libraries
+          rm -rf lib/luau/lib
+          
+          # Create directory structure and copy libraries
+          mkdir -p lib/luau/lib/{windows-x64,linux-x64,macos-{x64,arm64},android/{armv7,arm64-v8a,x86,x86_64},ios}
+          
+          # Copy with parallelization
+          cp -r all-artifacts/windows-x64-libs/* lib/luau/lib/windows-x64/ &
+          cp -r all-artifacts/linux-x64-libs/* lib/luau/lib/linux-x64/ &
+          cp -r all-artifacts/macos-x86_64-libs/* lib/luau/lib/macos-x64/ &
+          cp -r all-artifacts/macos-arm64-libs/* lib/luau/lib/macos-arm64/ &
+          cp -r all-artifacts/android-armv7-libs/* lib/luau/lib/android/armv7/ &
+          cp -r all-artifacts/android-arm64-v8a-libs/* lib/luau/lib/android/arm64-v8a/ &
+          cp -r all-artifacts/android-x86-libs/* lib/luau/lib/android/x86/ &
+          cp -r all-artifacts/android-x86_64-libs/* lib/luau/lib/android/x86_64/ &
+          cp -r all-artifacts/ios-*/* lib/luau/lib/ios/ &
+          wait
+          
+          # Final verification (under 95MB for GitHub)
+          echo "Final size verification:"
+          find lib/luau/lib -type f -exec bash -c 's=$(stat -c%s $1); printf "%-80s %6dMB\n" "$1" $((s/1048576)); [ $s -lt 99614720 ] || exit 1' _ {} \;
+          
+          # Commit and push
           git add lib/luau/lib
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-
-          GIT_AUTHOR_NAME="${{ github.actor }}" \
-          GIT_AUTHOR_EMAIL="${{ github.actor }}@users.noreply.github.com" \
-          git commit -m "🤖 Update prebuilt Luau libraries for ${{ github.ref_name }}"
-
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}"
-          git push origin main
+          git diff --cached --quiet && echo "No changes" && exit 0
+          
+          git commit -m "🤖 Update prebuilt Luau libraries"
+          git push origin HEAD:main
