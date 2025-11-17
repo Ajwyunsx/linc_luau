@@ -264,7 +264,7 @@ jobs:
           PY
       - name: Install dependencies
         run: |
-          brew install cmake p7zip
+          brew install cmake p7zip upx
       - name: Build Luau (macOS ${{ matrix.arch }})
         run: |
           cd luau-build
@@ -280,33 +280,13 @@ jobs:
           find luau-build/build-release-${{ matrix.arch }} -name "*.dylib" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \; 2>/dev/null || true
       - name: Strip and Ultra Compress macOS libraries
         run: |
-          # Install UPX - try different architectures
-          ARCH=$(uname -m)
-          echo "Detected architecture: $ARCH"
-          
-          if [ "$ARCH" = "arm64" ]; then
-            # For Apple Silicon, try arm64 version first, then x86_64
-            wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-macOS_arm64.tar.xz || \
-            wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-macOS_x86_64.tar.xz || \
-            wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_macos.tar.xz
-          else
-            # For Intel Mac, try x86_64 version first
-            wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-macOS_x86_64.tar.xz || \
-            wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_macos.tar.xz || \
-            wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
-          fi
-          
-          # Extract whatever we downloaded
-          tar -xf upx-*.tar.xz || tar -xf upx-*.tar.gz
-          
-          # Find the upx binary
-          UPX_BINARY=$(find . -name "upx" -type f | head -1)
+          # Use UPX from Homebrew
+          UPX_BINARY=$(which upx)
           if [ -z "$UPX_BINARY" ]; then
-            echo "ERROR: Could not find UPX binary"
+            echo "ERROR: UPX not found"
             exit 1
           fi
-          echo "Found UPX binary: $UPX_BINARY"
-          chmod +x "$UPX_BINARY"
+          echo "Using UPX binary: $UPX_BINARY"
           
           # Function to compress a static library aggressively
           compress_static_lib() {
@@ -568,7 +548,7 @@ jobs:
           PY
       - name: Install dependencies
         run: |
-          brew install cmake p7zip
+          brew install cmake p7zip upx
       - name: Build Luau (iOS ${{ matrix.sdk }})
         run: |
           cd luau-build
@@ -597,33 +577,13 @@ jobs:
           cp luau-build/build-ios-${{ matrix.sdk }}/Release/*.a artifacts/ios-${{ matrix.sdk }}/lib/ 2>/dev/null || true
       - name: Strip and Ultra Compress iOS libraries
         run: |
-          # Install UPX - try different architectures
-          ARCH=$(uname -m)
-          echo "Detected architecture: $ARCH"
-          
-          if [ "$ARCH" = "arm64" ]; then
-            # For Apple Silicon, try arm64 version first, then x86_64
-            wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-macOS_arm64.tar.xz || \
-            wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-macOS_x86_64.tar.xz || \
-            wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_macos.tar.xz
-          else
-            # For Intel Mac, try x86_64 version first
-            wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-macOS_x86_64.tar.xz || \
-            wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_macos.tar.xz || \
-            wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
-          fi
-          
-          # Extract whatever we downloaded
-          tar -xf upx-*.tar.xz || tar -xf upx-*.tar.gz
-          
-          # Find the upx binary
-          UPX_BINARY=$(find . -name "upx" -type f | head -1)
+          # Use UPX from Homebrew
+          UPX_BINARY=$(which upx)
           if [ -z "$UPX_BINARY" ]; then
-            echo "ERROR: Could not find UPX binary"
+            echo "ERROR: UPX not found"
             exit 1
           fi
-          echo "Found UPX binary: $UPX_BINARY"
-          chmod +x "$UPX_BINARY"
+          echo "Using UPX binary: $UPX_BINARY"
           
           # Function to compress a static library aggressively
           compress_static_lib() {
