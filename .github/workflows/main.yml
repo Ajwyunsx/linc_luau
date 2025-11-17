@@ -42,19 +42,19 @@ jobs:
           PY
 
       - name: Setup MSVC
-        uses: microsoft/setup-msbuild@v1.3
+        uses: microsoft/setup-msbuild@v2
 
       - name: Build Luau (Windows x64)
         run: |
           cd luau-build
           cmake -B build-release -A x64 -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
-          cmake --build build-release --config Release -m
+          cmake --build build-release --config Release --parallel
 
       - name: Install compression tools
         shell: pwsh
         run: |
           choco install llvm 7zip -y --no-progress
-          # Download UPX 4.2.4
+          New-Item -ItemType Directory -Path "C:\tools" -Force
           Invoke-WebRequest -Uri "https://github.com/upx/upx/releases/download/v${env:UPX_VERSION}/upx-${env:UPX_VERSION}-win64.zip" -OutFile "upx.zip"
           Expand-Archive -Path "upx.zip" -DestinationPath "." -Force
           Move-Item "upx-*/upx.exe" "C:\tools\upx.exe" -Force
@@ -75,34 +75,23 @@ jobs:
           $strip = Join-Path $llvmDir "llvm-strip.exe"
           $sevenZ = (Get-Command 7z).Source
           
-          # Process all files in parallel where possible
-          Get-ChildItem artifacts/windows-x64/lib -File | ForEach-Object -Parallel {
+          Get-ChildItem artifacts/windows-x64/lib -File | ForEach-Object {
             $file = $_
-            $stripPath = $using:strip
-            $sevenZPath = $using:sevenZ
-            $flags = $env:SEVEN_ZIP_FLAGS
-            
-            # Common strip step
-            & $stripPath --strip-debug $file.FullName 2>$null
-            & $stripPath --strip-unneeded $file.FullName 2>$null
+            & $strip --strip-debug $file.FullName 2>$null
+            & $strip --strip-unneeded $file.FullName 2>$null
             
             $originalSize = [math]::Round($file.Length / 1MB, 2)
             
             if ($file.Extension -eq ".lib") {
-              # STATIC LIBRARIES: Skip UPX, use 7z directly
               if ($originalSize -gt 80) {
-                Write-Host "Compressing static library $($file.Name): $originalSize MB"
-                & $sevenZPath a $flags "$($file.FullName).tmp" $file.FullName
+                & $sevenZ a $env:SEVEN_ZIP_FLAGS "$($file.FullName).tmp" $file.FullName
                 Move-Item "$($file.FullName).tmp" $file.FullName -Force
               }
             } else {
-              # SHARED LIBRARIES: UPX ultra-brute + 7z fallback
               & C:\tools\upx.exe --ultra-brute $file.FullName 2>$null
-              
               $newSize = [math]::Round((Get-Item $file.FullName).Length / 1MB, 2)
               if ($newSize -gt 90) {
-                Write-Host "7z fallback for $($file.Name): $newSize MB"
-                & $sevenZPath a $flags "$($file.FullName).tmp" $file.FullName
+                & $sevenZ a $env:SEVEN_ZIP_FLAGS "$($file.FullName).tmp" $file.FullName
                 Move-Item "$($file.FullName).tmp" $file.FullName -Force
               }
             }
@@ -165,30 +154,24 @@ jobs:
         env:
           SEVEN_ZIP_FLAGS: ${{ env.SEVEN_ZIP_FLAGS }}
         run: |
-          # Process libraries in parallel
           export JOBS=$(nproc)
           
-          # Static libraries: strip + 7z only
           find artifacts/linux-x64/lib -name "*.a" -size +80M | xargs -P $JOBS -I {} bash -c '
             strip --strip-unneeded {} 2>/dev/null
             7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
           '
           
-          # Shared libraries: strip + UPX + 7z fallback
           find artifacts/linux-x64/lib -name "*.so" | xargs -P $JOBS -I {} bash -c '
             strip --strip-unneeded {} 2>/dev/null
             upx --ultra-brute {} 2>/dev/null || true
-            if [ $(stat -c%s {}) -gt 94371840 ]; then  # 90MB in bytes
-              7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
-            fi
+            [ $(stat -c%s {}) -gt 94371840 ] && 7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
           '
           
-          # Verify all files
           find artifacts/linux-x64/lib -type f -exec bash -c '
             size=$(stat -c%s $1)
             sizeMB=$((size / 1048576))
             echo "$1: ${sizeMB}MB"
-            [ $size -lt 99614720 ] || { echo "ERROR: $1 too large"; exit 1; }
+            [ $size -lt 99614720 ] || exit 1
           ' _ {} \;
 
       - name: Upload Linux Artifacts
@@ -242,20 +225,17 @@ jobs:
         run: |
           JOBS=$(sysctl -n hw.ncpu)
           
-          # Static libraries
           find artifacts/macos-${{ matrix.arch }}/lib -name "*.a" -size +80M | xargs -P $JOBS -I {} bash -c '
             strip -S -x {} 2>/dev/null
             7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
           '
           
-          # Shared libraries
           find artifacts/macos-${{ matrix.arch }}/lib -name "*.dylib" | xargs -P $JOBS -I {} bash -c '
             strip -S -x {} 2>/dev/null
             upx --ultra-brute {} 2>/dev/null || true
             [ $(stat -f%z {}) -gt 94371840 ] && 7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
           '
           
-          # Verify
           find artifacts/macos-${{ matrix.arch }}/lib -type f -exec bash -c '
             size=$(stat -f%z $1)
             sizeMB=$((size / 1048576))
@@ -340,20 +320,17 @@ jobs:
           
           JOBS=$(nproc)
           
-          # Static libraries: strip + 7z only (no UPX to avoid LLVM issues)
           find artifacts/android-${{ matrix.abi }}/lib -name "*.a" -size +80M | xargs -P $JOBS -I {} bash -c '
             $STRIP --strip-unneeded {} 2>/dev/null
             7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
           '
           
-          # Shared libraries: strip + UPX
           find artifacts/android-${{ matrix.abi }}/lib -name "*.so" | xargs -P $JOBS -I {} bash -c '
             $STRIP --strip-unneeded {}
             upx --ultra-brute {} 2>/dev/null || true
             [ $(stat -c%s {}) -gt 94371840 ] && 7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
           '
           
-          # Verify sizes
           find artifacts/android-${{ matrix.abi }}/lib -type f -exec bash -c '
             size=$(stat -c%s $1)
             sizeMB=$((size / 1048576))
@@ -417,13 +394,11 @@ jobs:
         run: |
           JOBS=$(sysctl -n hw.ncpu)
           
-          # iOS only has static libraries
           find artifacts/ios-${{ matrix.sdk }}/lib -name "*.a" -size +80M | xargs -P $JOBS -I {} bash -c '
             xcrun strip -S -x {} 2>/dev/null
             7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
           '
           
-          # Verify
           find artifacts/ios-${{ matrix.sdk }}/lib -type f -exec bash -c '
             size=$(stat -f%z $1)
             sizeMB=$((size / 1048576))
@@ -457,7 +432,6 @@ jobs:
           set -e
           mkdir -p release-package/lib
           
-          # Platform mapping
           declare -A PLATFORMS=(
             ["windows-x64-libs"]="windows-x64"
             ["linux-x64-libs"]="linux-x64"
@@ -469,17 +443,14 @@ jobs:
             [ -d "all-artifacts/$artifact" ] && cp -r "all-artifacts/$artifact"/* "release-package/lib/${PLATFORMS[$artifact]}/"
           done
           
-          # Android (structured)
           for abi in armv7 arm64-v8a x86 x86_64; do
             mkdir -p "release-package/lib/android/$abi"
             cp -r "all-artifacts/android-${abi}-libs"/* "release-package/lib/android/$abi/" 2>/dev/null || true
           done
           
-          # iOS (flat structure)
           mkdir -p release-package/lib/ios
           cp -r all-artifacts/ios-*/* release-package/lib/ios/ 2>/dev/null || true
           
-          # Create per-platform and all-in-one archives
           cd release-package
           7z a -tzip linc_luau-libs-${GITHUB_REF_NAME}.zip lib/
           for build in windows-x64 linux-x64 macos-x64 macos-arm64 android ios; do
@@ -518,17 +489,12 @@ jobs:
         run: |
           set -e
           
-          # Configure git
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Remove old libraries
           rm -rf lib/luau/lib
-          
-          # Create directory structure and copy libraries
           mkdir -p lib/luau/lib/{windows-x64,linux-x64,macos-{x64,arm64},android/{armv7,arm64-v8a,x86,x86_64},ios}
           
-          # Copy with parallelization
           cp -r all-artifacts/windows-x64-libs/* lib/luau/lib/windows-x64/ &
           cp -r all-artifacts/linux-x64-libs/* lib/luau/lib/linux-x64/ &
           cp -r all-artifacts/macos-x86_64-libs/* lib/luau/lib/macos-x64/ &
@@ -540,11 +506,9 @@ jobs:
           cp -r all-artifacts/ios-*/* lib/luau/lib/ios/ &
           wait
           
-          # Final verification (under 95MB for GitHub)
           echo "Final size verification:"
           find lib/luau/lib -type f -exec bash -c 's=$(stat -c%s $1); printf "%-80s %6dMB\n" "$1" $((s/1048576)); [ $s -lt 99614720 ] || exit 1' _ {} \;
           
-          # Commit and push
           git add lib/luau/lib
           git diff --cached --quiet && echo "No changes" && exit 0
           
