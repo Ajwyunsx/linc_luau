@@ -44,13 +44,17 @@ jobs:
       - name: Setup MSVC
         uses: microsoft/setup-msbuild@v1.1
 
-      - name: Build Luau (Windows x64)
+      - name: Build Luau (Windows x64) - EXTREME OPTIMIZATION
         run: |
           cd luau-build
           mkdir build-release
           cd build-release
-          cmake .. -DCMAKE_BUILD_TYPE=Release -A x64 -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
-          cmake --build . --config Release
+          cmake .. -DCMAKE_BUILD_TYPE=Release -A x64 -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF ^
+            -DCMAKE_C_FLAGS="/O1 /Os /GL /Gw /Gy /GF /Zc:inline" ^
+            -DCMAKE_CXX_FLAGS="/O1 /Os /GL /Gw /Gy /GF /Zc:inline" ^
+            -DCMAKE_EXE_LINKER_FLAGS="/LTCG /OPT:REF /OPT:ICF /ALIGN:16" ^
+            -DCMAKE_SHARED_LINKER_FLAGS="/LTCG /OPT:REF /OPT:ICF /ALIGN:16"
+          cmake --build . --config Release --parallel
           
       - name: Setup LLVM strip and UPX
         shell: pwsh
@@ -61,64 +65,78 @@ jobs:
           Expand-Archive -Path "upx.zip" -DestinationPath "."
           Move-Item "upx-*/upx.exe" "upx.exe" -Force
 
-      - name: Collect and Compress Windows Libraries
+      - name: Collect and Compress Windows Libraries - EXTREME
         shell: pwsh
         run: |
           mkdir -p artifacts/windows-x64/lib
           Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/
           Copy-Item luau-build/build-release/Release/*.dll artifacts/windows-x64/lib/ -ErrorAction SilentlyContinue
 
-      - name: Strip and UPX Compress Windows libraries
+      - name: EXTREME Compression for Windows
         shell: pwsh
         run: |
           $strip = "${env:ProgramFiles}\LLVM\bin\llvm-strip.exe"
           $upxPath = Join-Path $PWD "upx.exe"
           $arPath = "${env:ProgramFiles}\LLVM\bin\llvm-ar.exe"
+          $objcopy = "${env:ProgramFiles}\LLVM\bin\llvm-objcopy.exe"
           
-          Get-ChildItem artifacts/windows-x64/lib -Filter "*.lib" | ForEach-Object { 
-            & $strip --strip-debug $_.FullName 
-            & $strip --strip-unneeded $_.FullName 
-          }
-          Get-ChildItem artifacts/windows-x64/lib -Filter "*.dll" | ForEach-Object { 
-            & $strip --strip-debug $_.FullName 
-            & $strip --strip-unneeded $_.FullName 
+          # EXTREME strip for all files
+          Get-ChildItem artifacts/windows-x64/lib -File | ForEach-Object {
+            & $strip --strip-all $_.FullName 2>$null
+            & $strip --remove-section=.comment $_.FullName 2>$null
+            & $strip --remove-section=.note $_.FullName 2>$null
+            & $objcopy --strip-all $_.FullName $_.FullName.tmp 2>$null
+            if (Test-Path "$_.FullName.tmp") {
+              Move-Item "$_.FullName.tmp" $_.FullName -Force
+            }
           }
           
+          # EXTREME compression for static libraries
+          Get-ChildItem artifacts/windows-x64/lib -Filter "*.lib" | ForEach-Object {
+            $libName = $_.Name
+            $libPath = $_.FullName
+            $tempDir = Join-Path $env:TEMP "compress_$(Get-Random)"
+            New-Item -ItemType Directory -Path $tempDir -Force
+            
+            try {
+              Push-Location $tempDir
+              & $arPath x $libPath
+              
+              # Compress each object file with EXTREME settings
+              Get-ChildItem -Filter "*.obj" | ForEach-Object {
+                & $strip --strip-all $_.FullName 2>$null
+                & $objcopy --strip-all $_.FullName $_.FullName.tmp 2>$null
+                if (Test-Path "$_.FullName.tmp") {
+                  Move-Item "$_.FullName.tmp" $_.FullName -Force
+                }
+                & $upxPath --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters $_.FullName 2>$null
+              }
+              
+              # Recreate with maximum compression
+              Remove-Item $libPath -Force
+              & $arPath rcs $libPath *.obj
+              
+              # Final EXTREME compression
+              & $strip --strip-all $libPath 2>$null
+              & $upxPath --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters $libPath 2>$null
+              
+              Pop-Location
+            } finally {
+              Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+          
+          # EXTREME compression for DLLs
+          Get-ChildItem artifacts/windows-x64/lib -Filter "*.dll" | ForEach-Object {
+            & $upxPath --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters $_.FullName
+          }
+          
+          # Verify sizes
           Get-ChildItem artifacts/windows-x64/lib -File | ForEach-Object {
             $sizeMB = [math]::Round($_.Length / 1MB, 2)
-            Write-Host "Original size $($_.Name): $sizeMB MB"
-            
-            if ($_.Extension -eq ".lib") {
-              $libName = $_.Name
-              $libPath = $_.FullName
-              $tempDir = Join-Path $env:TEMP "compress_$(Get-Random)"
-              New-Item -ItemType Directory -Path $tempDir -Force
-              
-              try {
-                Push-Location $tempDir
-                & $arPath x $libPath
-                
-                Get-ChildItem -Filter "*.obj" | ForEach-Object {
-                  & $strip --strip-unneeded $_.FullName 2>$null
-                  & $upxPath --best --lzma --brute $_.FullName 2>$null
-                }
-                
-                Remove-Item $libPath -Force
-                & $arPath rcs $libPath *.obj
-                
-                Pop-Location
-              } finally {
-                Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
-              }
-            } elseif ($_.Extension -eq ".dll") {
-              & $upxPath --best --lzma --brute $_.FullName
-            }
-            
-            $finalSizeMB = [math]::Round((Get-Item $_.FullName).Length / 1MB, 2)
-            Write-Host "Final size $($_.Name): $finalSizeMB MB"
-            
-            if ($finalSizeMB -gt 95) {
-              Write-Error "File $($_.Name) is still too large: $finalSizeMB MB"
+            Write-Host "Final size $($_.Name): $sizeMB MB"
+            if ($sizeMB -gt 50) {
+              Write-Error "File $($_.Name) is too large: $sizeMB MB"
               exit 1
             }
           }
@@ -158,77 +176,87 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake
+          sudo apt-get install -y build-essential cmake binutils
 
-      - name: Build Luau (Linux x64)
+      - name: Build Luau (Linux x64) - EXTREME OPTIMIZATION
         run: |
           cd luau-build
           mkdir build-release
           cd build-release
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF \
+            -DCMAKE_C_FLAGS="-Os -O1 -ffunction-sections -fdata-sections -fvisibility=hidden -flto=auto -fmerge-all-constants -fno-inline-functions -fno-inline-small-functions -fno-unroll-loops" \
+            -DCMAKE_CXX_FLAGS="-Os -O1 -ffunction-sections -fdata-sections -fvisibility=hidden -flto=auto -fmerge-all-constants -fno-inline-functions -fno-inline-small-functions -fno-unroll-loops" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections -Wl,--strip-all -Wl,--as-needed -flto=auto -s" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--gc-sections -Wl,--strip-all -Wl,--as-needed -flto=auto -s"
           cmake --build . --config Release -j$(nproc)
           
-      - name: Collect and Compress Linux Libraries
+      - name: Collect and Compress Linux Libraries - EXTREME
         run: |
           mkdir -p artifacts/linux-x64/lib
           find luau-build/build-release -name "*.a" -exec cp {} artifacts/linux-x64/lib/ \;
           find luau-build/build-release -name "*.so" -exec cp {} artifacts/linux-x64/lib/ \; 2>/dev/null || true
 
-      - name: Strip and UPX Compress Linux libraries
+      - name: EXTREME Compression for Linux
         run: |
           wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
           tar -xf upx-4.2.2-amd64_linux.tar.xz
           
-          compress_static_lib() {
+          extreme_compress_lib() {
             local lib="$1"
             local temp_dir=$(mktemp -d)
             local lib_name=$(basename "$lib")
             local lib_abs_path=$(realpath "$lib")
             
-            echo "Processing static library: $lib_name"
-            
-            if [ ! -f "$lib_abs_path" ]; then
-              echo "ERROR: Library file not found: $lib_abs_path"
-              rm -rf "$temp_dir"
-              return 1
-            fi
+            echo "EXTREME compressing: $lib_name"
             
             cd "$temp_dir"
             ar x "$lib_abs_path"
             
+            # EXTREME compression for each object
             for obj in *.o; do
               if [ -f "$obj" ]; then
-                strip --strip-unneeded "$obj" 2>/dev/null || true
-                ../upx-4.2.2-amd64_linux/upx --best --lzma --brute "$obj" 2>/dev/null || true
+                strip --strip-all --remove-section=.comment --remove-section=.note "$obj" 2>/dev/null || true
+                objcopy --strip-all "$obj" "$obj.tmp" 2>/dev/null && mv "$obj.tmp" "$obj" || true
+                ../upx-4.2.2-amd64_linux/upx --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters "$obj" 2>/dev/null || true
               fi
             done
             
+            # Recreate with EXTREME settings
             rm -f "$lib_abs_path"
             ar rcs "$lib_abs_path" *.o
+            strip --strip-all --remove-section=.comment --remove-section=.note "$lib_abs_path" 2>/dev/null || true
+            objcopy --strip-all "$lib_abs_path" "$lib_abs_path.tmp" 2>/dev/null && mv "$lib_abs_path.tmp" "$lib_abs_path" || true
+            
+            # Final EXTREME compression
+            ../upx-4.2.2-amd64_linux/upx --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters "$lib_abs_path" 2>/dev/null || true
             
             cd - > /dev/null
             rm -rf "$temp_dir"
           }
           
+          # Process all static libraries
           for lib in artifacts/linux-x64/lib/*.a; do
             if [ -f "$lib" ]; then
-              compress_static_lib "$lib"
+              extreme_compress_lib "$lib"
             fi
           done
           
+          # EXTREME compression for shared libraries
           for lib in artifacts/linux-x64/lib/*.so; do
             if [ -f "$lib" ]; then
-              strip --strip-unneeded "$lib"
-              ./upx-4.2.2-amd64_linux/upx --best --lzma --brute "$lib" || true
+              strip --strip-all --remove-section=.comment --remove-section=.note "$lib" 2>/dev/null || true
+              objcopy --strip-all "$lib" "$lib.tmp" 2>/dev/null && mv "$lib.tmp" "$lib" || true
+              ./upx-4.2.2-amd64_linux/upx --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters "$lib" 2>/dev/null || true
             fi
           done
           
+          # Verify sizes
           for f in artifacts/linux-x64/lib/*; do
             if [ -f "$f" ]; then
               sizeMB=$(du -m "$f" | cut -f1)
               echo "$(basename "$f"): ${sizeMB} MB"
-              if [ "$sizeMB" -gt 95 ]; then
-                echo "ERROR: File $(basename "$f") is still too large: ${sizeMB} MB"
+              if [ "$sizeMB" -gt 50 ]; then
+                echo "ERROR: File $(basename "$f") is too large: ${sizeMB} MB"
                 exit 1
               fi
             fi
@@ -273,78 +301,81 @@ jobs:
         run: |
           brew install cmake upx
 
-      - name: Build Luau (macOS ${{ matrix.arch }})
+      - name: Build Luau (macOS ${{ matrix.arch }}) - EXTREME OPTIMIZATION
         run: |
           cd luau-build
           mkdir build-release-${{ matrix.arch }}
           cd build-release-${{ matrix.arch }}
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF \
+            -DCMAKE_C_FLAGS="-Os -O1 -ffunction-sections -fdata-sections -fvisibility=hidden -flto=auto -fmerge-all-constants -fno-inline-functions -fno-inline-small-functions -fno-unroll-loops" \
+            -DCMAKE_CXX_FLAGS="-Os -O1 -ffunction-sections -fdata-sections -fvisibility=hidden -flto=auto -fmerge-all-constants -fno-inline-functions -fno-inline-small-functions -fno-unroll-loops" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,-dead_strip -Wl,-x -Wl,-S -flto=auto" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-dead_strip -Wl,-x -Wl,-S -flto=auto"
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
           
-      - name: Collect and Compress macOS Libraries
+      - name: Collect and Compress macOS Libraries - EXTREME
         run: |
           mkdir -p artifacts/macos-${{ matrix.arch }}/lib
           find luau-build/build-release-${{ matrix.arch }} -name "*.a" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \;
           find luau-build/build-release-${{ matrix.arch }} -name "*.dylib" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \; 2>/dev/null || true
 
-      - name: Strip and UPX Compress macOS libraries
+      - name: EXTREME Compression for macOS
         run: |
           UPX_BINARY=$(which upx)
-          if [ -z "$UPX_BINARY" ]; then
-            echo "ERROR: UPX not found"
-            exit 1
-          fi
           
-          compress_static_lib() {
+          extreme_compress_lib() {
             local lib="$1"
             local temp_dir=$(mktemp -d)
             local lib_name=$(basename "$lib")
             local lib_abs_path=$(realpath "$lib")
             
-            echo "Processing static library: $lib_name"
-            
-            if [ ! -f "$lib_abs_path" ]; then
-              echo "ERROR: Library file not found: $lib_abs_path"
-              rm -rf "$temp_dir"
-              return 1
-            fi
+            echo "EXTREME compressing: $lib_name"
             
             cd "$temp_dir"
             ar x "$lib_abs_path"
             
+            # EXTREME compression for each object
             for obj in *.o; do
               if [ -f "$obj" ]; then
-                strip -S -x "$obj" 2>/dev/null || true
-                "$UPX_BINARY" --best --lzma --brute "$obj" 2>/dev/null || true
+                strip -S -x -X "$obj" 2>/dev/null || true
+                "$UPX_BINARY" --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters "$obj" 2>/dev/null || true
               fi
             done
             
+            # Recreate with EXTREME settings
             rm -f "$lib_abs_path"
             ar rcs "$lib_abs_path" *.o
+            strip -S -x -X "$lib_abs_path" 2>/dev/null || true
+            
+            # Final EXTREME compression
+            "$UPX_BINARY" --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters "$lib_abs_path" 2>/dev/null || true
             
             cd - > /dev/null
             rm -rf "$temp_dir"
           }
           
+          # Process all static libraries
           for lib in artifacts/macos-${{ matrix.arch }}/lib/*.a; do
             if [ -f "$lib" ]; then
-              compress_static_lib "$lib"
+              extreme_compress_lib "$lib"
             fi
           done
           
+          # EXTREME compression for shared libraries
           for lib in artifacts/macos-${{ matrix.arch }}/lib/*.dylib; do
             if [ -f "$lib" ]; then
-              strip -S -x "$lib"
-              "$UPX_BINARY" --best --lzma --brute "$lib" || true
+              strip -S -x -X "$lib" 2>/dev/null || true
+              "$UPX_BINARY" --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters "$lib" 2>/dev/null || true
             fi
           done
           
+          # Verify sizes
           for f in artifacts/macos-${{ matrix.arch }}/lib/*; do
             if [ -f "$f" ]; then
               sizeMB=$(du -m "$f" | cut -f1)
               echo "$(basename "$f"): ${sizeMB} MB"
-              if [ "$sizeMB" -gt 95 ]; then
-                echo "ERROR: File $(basename "$f") is still too large: ${sizeMB} MB"
+              if [ "$sizeMB" -gt 50 ]; then
+                echo "ERROR: File $(basename "$f") is too large: ${sizeMB} MB"
                 exit 1
               fi
             fi
@@ -390,7 +421,7 @@ jobs:
         with:
           ndk-version: r25c
 
-      - name: Build Luau (Android ${{ matrix.abi }})
+      - name: Build Luau (Android ${{ matrix.abi }}) - EXTREME OPTIMIZATION
         run: |
           cd luau-build
           mkdir build-android-${{ matrix.abi }}
@@ -403,20 +434,20 @@ jobs:
             -DANDROID_ABI=${ANDROID_ABI} \
             -DANDROID_PLATFORM=android-21 \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden" \
-            -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden" \
-            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--gc-sections" \
+            -DCMAKE_C_FLAGS="-Os -O1 -ffunction-sections -fdata-sections -fvisibility=hidden -fno-inline-functions -fno-inline-small-functions -fno-unroll-loops" \
+            -DCMAKE_CXX_FLAGS="-Os -O1 -ffunction-sections -fdata-sections -fvisibility=hidden -fno-inline-functions -fno-inline-small-functions -fno-unroll-loops" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections -Wl,--strip-all -Wl,--as-needed -s" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--gc-sections -Wl,--strip-all -Wl,--as-needed -s" \
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(nproc)
           
-      - name: Collect and Compress Android Libraries
+      - name: Collect and Compress Android Libraries - EXTREME
         run: |
           mkdir -p artifacts/android-${{ matrix.abi }}/lib
           find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \;
           find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \; 2>/dev/null || true
 
-      - name: Strip and UPX Compress Android libraries
+      - name: EXTREME Compression for Android
         run: |
           case "${{ matrix.abi }}" in
             armv7) TRIPLE=armv7a-linux-androideabi;;
@@ -429,29 +460,32 @@ jobs:
           wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
           tar -xf upx-4.2.2-amd64_linux.tar.xz
           
+          # EXTREME compression for static libraries
           for lib in artifacts/android-${{ matrix.abi }}/lib/*.a; do
             if [ -f "$lib" ]; then
-              echo "Processing static library: $(basename "$lib")"
-              ${STRIP_CMD} --strip-debug "$lib" 2>/dev/null || true
-              ${STRIP_CMD} --strip-unneeded "$lib" 2>/dev/null || true
+              echo "EXTREME compressing: $(basename "$lib")"
+              ${STRIP_CMD} --strip-all --remove-section=.comment --remove-section=.note "$lib" 2>/dev/null || true
+              # Only use safe UPX for Android
               ./upx-4.2.2-amd64_linux/upx --best --lzma "$lib" 2>/dev/null || true
             fi
           done
           
+          # EXTREME compression for shared libraries
           for lib in artifacts/android-${{ matrix.abi }}/lib/*.so; do
             if [ -f "$lib" ]; then
-              ${STRIP_CMD} --strip-debug "$lib" 2>/dev/null || true
-              ${STRIP_CMD} --strip-unneeded "$lib" 2>/dev/null || true
+              ${STRIP_CMD} --strip-all --remove-section=.comment --remove-section=.note "$lib" 2>/dev/null || true
               ./upx-4.2.2-amd64_linux/upx --best --lzma "$lib" 2>/dev/null || true
             fi
           done
           
+          # Verify sizes
           for f in artifacts/android-${{ matrix.abi }}/lib/*; do
             if [ -f "$f" ]; then
               sizeMB=$(du -m "$f" | cut -f1)
               echo "$(basename "$f"): ${sizeMB} MB"
-              if [ "$sizeMB" -gt 95 ]; then
-                echo "WARNING: File $(basename "$f") is large: ${sizeMB} MB"
+              if [ "$sizeMB" -gt 50 ]; then
+                echo "ERROR: File $(basename "$f") is too large: ${sizeMB} MB"
+                exit 1
               fi
             fi
           done
@@ -495,7 +529,7 @@ jobs:
         run: |
           brew install cmake upx
 
-      - name: Build Luau (iOS ${{ matrix.sdk }})
+      - name: Build Luau (iOS ${{ matrix.sdk }}) - EXTREME OPTIMIZATION
         run: |
           cd luau-build
           mkdir build-ios-${{ matrix.sdk }}
@@ -512,67 +546,67 @@ jobs:
             -DCMAKE_OSX_SYSROOT=${{ matrix.sdk }} \
             -DCMAKE_OSX_ARCHITECTURES=$ARCH \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="-Os -ffunction-sections -fdata-sections" \
-            -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections" \
+            -DCMAKE_C_FLAGS="-Os -O1 -ffunction-sections -fdata-sections -flto=auto -fmerge-all-constants -fno-inline-functions -fno-inline-small-functions -fno-unroll-loops" \
+            -DCMAKE_CXX_FLAGS="-Os -O1 -ffunction-sections -fdata-sections -flto=auto -fmerge-all-constants -fno-inline-functions -fno-inline-small-functions -fno-unroll-loops" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,-dead_strip -Wl,-x -Wl,-S -flto=auto" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-dead_strip -Wl,-x -Wl,-S -flto=auto" \
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
           
-      - name: Collect and Compress iOS Libraries
+      - name: Collect and Compress iOS Libraries - EXTREME
         run: |
           mkdir -p artifacts/ios-${{ matrix.sdk }}/lib
           cp luau-build/build-ios-${{ matrix.sdk }}/Release/*.a artifacts/ios-${{ matrix.sdk }}/lib/ 2>/dev/null || true
 
-      - name: Strip and UPX Compress iOS libraries
+      - name: EXTREME Compression for iOS
         run: |
           UPX_BINARY=$(which upx)
-          if [ -z "$UPX_BINARY" ]; then
-            echo "ERROR: UPX not found"
-            exit 1
-          fi
           
-          compress_static_lib() {
+          extreme_compress_lib() {
             local lib="$1"
             local temp_dir=$(mktemp -d)
             local lib_name=$(basename "$lib")
             local lib_abs_path=$(realpath "$lib")
             
-            echo "Processing static library: $lib_name"
-            
-            if [ ! -f "$lib_abs_path" ]; then
-              echo "ERROR: Library file not found: $lib_abs_path"
-              rm -rf "$temp_dir"
-              return 1
-            fi
+            echo "EXTREME compressing: $lib_name"
             
             cd "$temp_dir"
             ar x "$lib_abs_path"
             
+            # EXTREME compression for each object
             for obj in *.o; do
               if [ -f "$obj" ]; then
-                xcrun strip -S -x "$obj" 2>/dev/null || true
-                "$UPX_BINARY" --best --lzma --brute "$obj" 2>/dev/null || true
+                xcrun strip -S -x -X "$obj" 2>/dev/null || true
+                "$UPX_BINARY" --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters "$obj" 2>/dev/null || true
               fi
             done
             
+            # Recreate with EXTREME settings
             rm -f "$lib_abs_path"
             ar rcs "$lib_abs_path" *.o
+            xcrun strip -S -x -X "$lib_abs_path" 2>/dev/null || true
+            
+            # Final EXTREME compression
+            "$UPX_BINARY" --best --lzma --ultra-brute --crp-ms=100000 --all-methods --all-filters "$lib_abs_path" 2>/dev/null || true
             
             cd - > /dev/null
             rm -rf "$temp_dir"
           }
           
+          # Process all static libraries
           for lib in artifacts/ios-${{ matrix.sdk }}/lib/*.a; do
             if [ -f "$lib" ]; then
-              compress_static_lib "$lib"
+              extreme_compress_lib "$lib"
             fi
           done
           
+          # Verify sizes
           for f in artifacts/ios-${{ matrix.sdk }}/lib/*; do
             if [ -f "$f" ]; then
               sizeMB=$(du -m "$f" | cut -f1)
               echo "$(basename "$f"): ${sizeMB} MB"
-              if [ "$sizeMB" -gt 95 ]; then
-                echo "ERROR: File $(basename "$f") is still too large: ${sizeMB} MB"
+              if [ "$sizeMB" -gt 50 ]; then
+                echo "ERROR: File $(basename "$f") is too large: ${sizeMB} MB"
                 exit 1
               fi
             fi
@@ -694,9 +728,9 @@ jobs:
           echo "Final file size verification:"
           find lib/luau/lib -type f -exec bash -c 'echo "$1: $(du -h "$1" | cut -f1)"' _ {} \;
           
-          if find lib/luau/lib -type f -size +95M | grep -q .; then
-            echo "ERROR: Some files are still too large (>95MB):"
-            find lib/luau/lib -type f -size +95M -exec ls -lh {} \;
+          if find lib/luau/lib -type f -size +50M | grep -q .; then
+            echo "ERROR: Some files are still too large (>50MB):"
+            find lib/luau/lib -type f -size +50M -exec ls -lh {} \;
             exit 1
           fi
 
