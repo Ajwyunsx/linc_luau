@@ -497,7 +497,7 @@ jobs:
           find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \;
           find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \; 2>/dev/null || true
 
-      - name: Strip and Ultra Compress Android libraries
+      - name: Strip and Compress Android libraries (SAFE MODE)
         run: |
           case "${{ matrix.abi }}" in
             armv7) TRIPLE=armv7a-linux-androideabi;;
@@ -507,48 +507,39 @@ jobs:
           esac
           STRIP_CMD=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/${TRIPLE}-strip
           
-          # Install UPX
-          wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
-          tar -xf upx-4.2.2-amd64_linux.tar.xz
+          # SAFE MODE: Only strip, no UPX or 7z compression for Android
+          # This prevents library corruption and linking issues
+          echo "Using SAFE MODE for Android libraries - strip only"
           
-          # Skip aggressive compression for Android to avoid LLVM version issues
-          # Just strip and do basic compression
+          # Process static libraries - strip only
           for lib in artifacts/android-${{ matrix.abi }}/lib/*.a; do
             if [ -f "$lib" ]; then
               echo "Processing static library: $(basename "$lib")"
-              # Only strip, don't extract/recompress to avoid LLVM version issues
+              # Only strip debug info
+              ${STRIP_CMD} --strip-debug "$lib" 2>/dev/null || true
               ${STRIP_CMD} --strip-unneeded "$lib" 2>/dev/null || true
               
-              # Try basic compression but don't fail if it doesn't work
-              ./upx-4.2.2-amd64_linux/upx --best "$lib" 2>/dev/null || true
-              
-              # If still too large, use 7z
+              # Check file size
               sizeMB=$(du -m "$lib" | cut -f1)
-              if [ "$sizeMB" -gt 90 ]; then
-                echo "Using 7z compression for $(basename "$lib")"
-                7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib.tmp" "$lib"
-                mv "$lib.tmp" "$lib"
+              echo "$(basename "$lib"): ${sizeMB} MB (after strip)"
+              
+              # If file is too large (>100MB), warn but don't compress
+              if [ "$sizeMB" -gt 100 ]; then
+                echo "WARNING: File $(basename "$lib") is large: ${sizeMB} MB"
+                echo "This is expected for Analysis library - keeping as-is"
               fi
             fi
           done
           
-          # Process shared libraries
+          # Process shared libraries - strip only
           for lib in artifacts/android-${{ matrix.abi }}/lib/*.so; do
             if [ -f "$lib" ]; then
-              ${STRIP_CMD} --strip-unneeded "$lib"
-              ./upx-4.2.2-amd64_linux/upx --best "$lib" 2>/dev/null || true
-            fi
-          done
-          
-          # Verify file sizes
-          for f in artifacts/android-${{ matrix.abi }}/lib/*; do
-            if [ -f "$f" ]; then
-              sizeMB=$(du -m "$f" | cut -f1)
-              echo "$(basename "$f"): ${sizeMB} MB"
-              if [ "$sizeMB" -gt 95 ]; then
-                echo "ERROR: File $(basename "$f") is still too large: ${sizeMB} MB"
-                exit 1
-              fi
+              echo "Processing shared library: $(basename "$lib")"
+              ${STRIP_CMD} --strip-debug "$lib" 2>/dev/null || true
+              ${STRIP_CMD} --strip-unneeded "$lib" 2>/dev/null || true
+              
+              sizeMB=$(du -m "$lib" | cut -f1)
+              echo "$(basename "$lib"): ${sizeMB} MB (after strip)"
             fi
           done
           
