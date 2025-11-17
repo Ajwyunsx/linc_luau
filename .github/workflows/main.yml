@@ -120,8 +120,8 @@ jobs:
           name: windows-x64-libs
           path: artifacts/windows-x64/
 
-build-linux:
-    runs-ons: ubuntu-latest
+  build-linux:
+    runs-on: ubuntu-latest
     steps:
       - name: Clone Luau repository
         run: |
