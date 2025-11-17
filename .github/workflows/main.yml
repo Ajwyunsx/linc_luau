@@ -1,8 +1,4 @@
-# Fixed workflow: corrected unbalanced quoting and replaced in-shell multi-line "-m" commits
-# with here-documents to avoid unexpected EOF while looking for matching `"' errors.
-# Also removed stray/unmatched characters and normalized spacing.
-# **FIXED**: git commit -F -> -m, and corrected workflow name typo
-# **ENHANCED**: Added ultra-aggressive compression for static libraries
+
 name: Build & Update Luau Libraries
 permissions:
   contents: write
@@ -161,37 +157,47 @@ jobs:
           
           # Function to compress a static library aggressively
           compress_static_lib() {
-            local lib=$1
+            local lib="$1"
             local temp_dir=$(mktemp -d)
             local lib_name=$(basename "$lib")
+            local lib_abs_path=$(realpath "$lib")
             
             echo "Processing static library: $lib_name"
             
+            # Check if file exists
+            if [ ! -f "$lib_abs_path" ]; then
+              echo "ERROR: Library file not found: $lib_abs_path"
+              rm -rf "$temp_dir"
+              return 1
+            fi
+            
             # Extract all object files
             cd "$temp_dir"
-            ar x "$lib"
+            ar x "$lib_abs_path"
             
             # Compress each object file with maximum compression
             for obj in *.o; do
-              # Strip object file
-              strip --strip-unneeded "$obj" 2>/dev/null || true
-              # Compress with UPX
-              ../upx-4.2.2-amd64_linux/upx --best --lzma --brute "$obj" 2>/dev/null || true
+              if [ -f "$obj" ]; then
+                # Strip object file
+                strip --strip-unneeded "$obj" 2>/dev/null || true
+                # Compress with UPX
+                ../upx-4.2.2-amd64_linux/upx --best --lzma --brute "$obj" 2>/dev/null || true
+              fi
             done
             
             # Recreate the archive
-            rm -f "$lib"
-            ar rcs "$lib" *.o
+            rm -f "$lib_abs_path"
+            ar rcs "$lib_abs_path" *.o
             
             # Final compression of the whole library
-            ../upx-4.2.2-amd64_linux/upx --best --lzma --brute "$lib" 2>/dev/null || true
+            ../upx-4.2.2-amd64_linux/upx --best --lzma --brute "$lib_abs_path" 2>/dev/null || true
             
             # If still too large, use 7z
-            local sizeMB=$(du -m "$lib" | cut -f1)
+            local sizeMB=$(du -m "$lib_abs_path" | cut -f1)
             if [ "$sizeMB" -gt 90 ]; then
               echo "Using 7z compression for $lib_name"
-              7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib.tmp" "$lib"
-              mv "$lib.tmp" "$lib"
+              7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib_abs_path.tmp" "$lib_abs_path"
+              mv "$lib_abs_path.tmp" "$lib_abs_path"
             fi
             
             cd - > /dev/null
@@ -215,11 +221,13 @@ jobs:
           
           # Verify file sizes
           for f in artifacts/linux-x64/lib/*; do
-            sizeMB=$(du -m "$f" | cut -f1)
-            echo "$(basename "$f"): ${sizeMB} MB"
-            if [ "$sizeMB" -gt 95 ]; then
-              echo "ERROR: File $(basename "$f") is still too large: ${sizeMB} MB"
-              exit 1
+            if [ -f "$f" ]; then
+              sizeMB=$(du -m "$f" | cut -f1)
+              echo "$(basename "$f"): ${sizeMB} MB"
+              if [ "$sizeMB" -gt 95 ]; then
+                echo "ERROR: File $(basename "$f") is still too large: ${sizeMB} MB"
+                exit 1
+              fi
             fi
           done
           
@@ -279,35 +287,45 @@ jobs:
           
           # Function to compress a static library aggressively
           compress_static_lib() {
-            local lib=$1
+            local lib="$1"
             local temp_dir=$(mktemp -d)
             local lib_name=$(basename "$lib")
+            local lib_abs_path=$(realpath "$lib")
             
             echo "Processing static library: $lib_name"
             
+            # Check if file exists
+            if [ ! -f "$lib_abs_path" ]; then
+              echo "ERROR: Library file not found: $lib_abs_path"
+              rm -rf "$temp_dir"
+              return 1
+            fi
+            
             # Extract all object files
             cd "$temp_dir"
-            ar x "$lib"
+            ar x "$lib_abs_path"
             
             # Compress each object file
             for obj in *.o; do
-              strip -S -x "$obj" 2>/dev/null || true
-              ../upx-*/upx --best --lzma --brute "$obj" 2>/dev/null || true
+              if [ -f "$obj" ]; then
+                strip -S -x "$obj" 2>/dev/null || true
+                ../upx-*/upx --best --lzma --brute "$obj" 2>/dev/null || true
+              fi
             done
             
             # Recreate the archive
-            rm -f "$lib"
-            ar rcs "$lib" *.o
+            rm -f "$lib_abs_path"
+            ar rcs "$lib_abs_path" *.o
             
             # Final compression
-            ../upx-*/upx --best --lzma --brute "$lib" 2>/dev/null || true
+            ../upx-*/upx --best --lzma --brute "$lib_abs_path" 2>/dev/null || true
             
             # If still too large, use 7z
-            local sizeMB=$(du -m "$lib" | cut -f1)
+            local sizeMB=$(du -m "$lib_abs_path" | cut -f1)
             if [ "$sizeMB" -gt 90 ]; then
               echo "Using 7z compression for $lib_name"
-              7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib.tmp" "$lib"
-              mv "$lib.tmp" "$lib"
+              7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib_abs_path.tmp" "$lib_abs_path"
+              mv "$lib_abs_path.tmp" "$lib_abs_path"
             fi
             
             cd - > /dev/null
@@ -331,11 +349,13 @@ jobs:
           
           # Verify file sizes
           for f in artifacts/macos-${{ matrix.arch }}/lib/*; do
-            sizeMB=$(du -m "$f" | cut -f1)
-            echo "$(basename "$f"): ${sizeMB} MB"
-            if [ "$sizeMB" -gt 95 ]; then
-              echo "ERROR: File $(basename "$f") is still too large: ${sizeMB} MB"
-              exit 1
+            if [ -f "$f" ]; then
+              sizeMB=$(du -m "$f" | cut -f1)
+              echo "$(basename "$f"): ${sizeMB} MB"
+              if [ "$sizeMB" -gt 95 ]; then
+                echo "ERROR: File $(basename "$f") is still too large: ${sizeMB} MB"
+                exit 1
+              fi
             fi
           done
           
@@ -419,35 +439,45 @@ jobs:
           
           # Function to compress a static library aggressively
           compress_static_lib() {
-            local lib=$1
+            local lib="$1"
             local temp_dir=$(mktemp -d)
             local lib_name=$(basename "$lib")
+            local lib_abs_path=$(realpath "$lib")
             
             echo "Processing static library: $lib_name"
             
+            # Check if file exists
+            if [ ! -f "$lib_abs_path" ]; then
+              echo "ERROR: Library file not found: $lib_abs_path"
+              rm -rf "$temp_dir"
+              return 1
+            fi
+            
             # Extract all object files
             cd "$temp_dir"
-            ar x "$lib"
+            ar x "$lib_abs_path"
             
             # Compress each object file
             for obj in *.o; do
-              ${STRIP_CMD} --strip-unneeded "$obj" 2>/dev/null || true
-              ../upx-4.2.2-amd64_linux/upx --best --lzma --brute "$obj" 2>/dev/null || true
+              if [ -f "$obj" ]; then
+                ${STRIP_CMD} --strip-unneeded "$obj" 2>/dev/null || true
+                ../upx-4.2.2-amd64_linux/upx --best --lzma --brute "$obj" 2>/dev/null || true
+              fi
             done
             
             # Recreate the archive
-            rm -f "$lib"
-            ar rcs "$lib" *.o
+            rm -f "$lib_abs_path"
+            ar rcs "$lib_abs_path" *.o
             
             # Final compression
-            ../upx-4.2.2-amd64_linux/upx --best --lzma --brute "$lib" 2>/dev/null || true
+            ../upx-4.2.2-amd64_linux/upx --best --lzma --brute "$lib_abs_path" 2>/dev/null || true
             
             # If still too large, use 7z
-            local sizeMB=$(du -m "$lib" | cut -f1)
+            local sizeMB=$(du -m "$lib_abs_path" | cut -f1)
             if [ "$sizeMB" -gt 90 ]; then
               echo "Using 7z compression for $lib_name"
-              7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib.tmp" "$lib"
-              mv "$lib.tmp" "$lib"
+              7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib_abs_path.tmp" "$lib_abs_path"
+              mv "$lib_abs_path.tmp" "$lib_abs_path"
             fi
             
             cd - > /dev/null
@@ -471,11 +501,13 @@ jobs:
           
           # Verify file sizes
           for f in artifacts/android-${{ matrix.abi }}/lib/*; do
-            sizeMB=$(du -m "$f" | cut -f1)
-            echo "$(basename "$f"): ${sizeMB} MB"
-            if [ "$sizeMB" -gt 95 ]; then
-              echo "ERROR: File $(basename "$f") is still too large: ${sizeMB} MB"
-              exit 1
+            if [ -f "$f" ]; then
+              sizeMB=$(du -m "$f" | cut -f1)
+              echo "$(basename "$f"): ${sizeMB} MB"
+              if [ "$sizeMB" -gt 95 ]; then
+                echo "ERROR: File $(basename "$f") is still too large: ${sizeMB} MB"
+                exit 1
+              fi
             fi
           done
           
@@ -548,35 +580,45 @@ jobs:
           
           # Function to compress a static library aggressively
           compress_static_lib() {
-            local lib=$1
+            local lib="$1"
             local temp_dir=$(mktemp -d)
             local lib_name=$(basename "$lib")
+            local lib_abs_path=$(realpath "$lib")
             
             echo "Processing static library: $lib_name"
             
+            # Check if file exists
+            if [ ! -f "$lib_abs_path" ]; then
+              echo "ERROR: Library file not found: $lib_abs_path"
+              rm -rf "$temp_dir"
+              return 1
+            fi
+            
             # Extract all object files
             cd "$temp_dir"
-            ar x "$lib"
+            ar x "$lib_abs_path"
             
             # Compress each object file
             for obj in *.o; do
-              xcrun strip -S -x "$obj" 2>/dev/null || true
-              ../upx-*/upx --best --lzma --brute "$obj" 2>/dev/null || true
+              if [ -f "$obj" ]; then
+                xcrun strip -S -x "$obj" 2>/dev/null || true
+                ../upx-*/upx --best --lzma --brute "$obj" 2>/dev/null || true
+              fi
             done
             
             # Recreate the archive
-            rm -f "$lib"
-            ar rcs "$lib" *.o
+            rm -f "$lib_abs_path"
+            ar rcs "$lib_abs_path" *.o
             
             # Final compression
-            ../upx-*/upx --best --lzma --brute "$lib" 2>/dev/null || true
+            ../upx-*/upx --best --lzma --brute "$lib_abs_path" 2>/dev/null || true
             
             # If still too large, use 7z
-            local sizeMB=$(du -m "$lib" | cut -f1)
+            local sizeMB=$(du -m "$lib_abs_path" | cut -f1)
             if [ "$sizeMB" -gt 90 ]; then
               echo "Using 7z compression for $lib_name"
-              7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib.tmp" "$lib"
-              mv "$lib.tmp" "$lib"
+              7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib_abs_path.tmp" "$lib_abs_path"
+              mv "$lib_abs_path.tmp" "$lib_abs_path"
             fi
             
             cd - > /dev/null
@@ -592,11 +634,13 @@ jobs:
           
           # Verify file sizes
           for f in artifacts/ios-${{ matrix.sdk }}/lib/*; do
-            sizeMB=$(du -m "$f" | cut -f1)
-            echo "$(basename "$f"): ${sizeMB} MB"
-            if [ "$sizeMB" -gt 95 ]; then
-              echo "ERROR: File $(basename "$f") is still too large: ${sizeMB} MB"
-              exit 1
+            if [ -f "$f" ]; then
+              sizeMB=$(du -m "$f" | cut -f1)
+              echo "$(basename "$f"): ${sizeMB} MB"
+              if [ "$sizeMB" -gt 95 ]; then
+                echo "ERROR: File $(basename "$f") is still too large: ${sizeMB} MB"
+                exit 1
+              fi
             fi
           done
           
