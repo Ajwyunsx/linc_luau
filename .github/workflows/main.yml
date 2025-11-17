@@ -477,15 +477,17 @@ jobs:
           cd build-android-${{ matrix.abi }}
           ANDROID_ABI=${{ matrix.abi }}
           if [ "${{ matrix.abi }}" = "armv7" ]; then ANDROID_ABI="armeabi-v7a"; fi
+          
+          # Use NDK's LLVM to ensure compatibility
           cmake .. \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=${ANDROID_ABI} \
             -DANDROID_PLATFORM=android-21 \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden -flto" \
-            -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden -flto" \
-            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections -flto" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--gc-sections -flto" \
+            -DCMAKE_C_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden" \
+            -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--gc-sections" \
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(nproc)
           
@@ -509,57 +511,24 @@ jobs:
           wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
           tar -xf upx-4.2.2-amd64_linux.tar.xz
           
-          # Function to compress a static library aggressively
-          compress_static_lib() {
-            local lib="$1"
-            local temp_dir=$(mktemp -d)
-            local lib_name=$(basename "$lib")
-            local lib_abs_path=$(realpath "$lib")
-            
-            echo "Processing static library: $lib_name"
-            
-            # Check if file exists
-            if [ ! -f "$lib_abs_path" ]; then
-              echo "ERROR: Library file not found: $lib_abs_path"
-              rm -rf "$temp_dir"
-              return 1
-            fi
-            
-            # Extract all object files
-            cd "$temp_dir"
-            ar x "$lib_abs_path"
-            
-            # Compress each object file
-            for obj in *.o; do
-              if [ -f "$obj" ]; then
-                ${STRIP_CMD} --strip-unneeded "$obj" 2>/dev/null || true
-                ../upx-4.2.2-amd64_linux/upx --best --lzma --brute "$obj" 2>/dev/null || true
-              fi
-            done
-            
-            # Recreate the archive
-            rm -f "$lib_abs_path"
-            ar rcs "$lib_abs_path" *.o
-            
-            # Final compression
-            ../upx-4.2.2-amd64_linux/upx --best --lzma --brute "$lib_abs_path" 2>/dev/null || true
-            
-            # If still too large, use 7z
-            local sizeMB=$(du -m "$lib_abs_path" | cut -f1)
-            if [ "$sizeMB" -gt 90 ]; then
-              echo "Using 7z compression for $lib_name"
-              7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib_abs_path.tmp" "$lib_abs_path"
-              mv "$lib_abs_path.tmp" "$lib_abs_path"
-            fi
-            
-            cd - > /dev/null
-            rm -rf "$temp_dir"
-          }
-          
-          # Process all static libraries
+          # Skip aggressive compression for Android to avoid LLVM version issues
+          # Just strip and do basic compression
           for lib in artifacts/android-${{ matrix.abi }}/lib/*.a; do
             if [ -f "$lib" ]; then
-              compress_static_lib "$lib"
+              echo "Processing static library: $(basename "$lib")"
+              # Only strip, don't extract/recompress to avoid LLVM version issues
+              ${STRIP_CMD} --strip-unneeded "$lib" 2>/dev/null || true
+              
+              # Try basic compression but don't fail if it doesn't work
+              ./upx-4.2.2-amd64_linux/upx --best "$lib" 2>/dev/null || true
+              
+              # If still too large, use 7z
+              sizeMB=$(du -m "$lib" | cut -f1)
+              if [ "$sizeMB" -gt 90 ]; then
+                echo "Using 7z compression for $(basename "$lib")"
+                7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib.tmp" "$lib"
+                mv "$lib.tmp" "$lib"
+              fi
             fi
           done
           
@@ -567,7 +536,7 @@ jobs:
           for lib in artifacts/android-${{ matrix.abi }}/lib/*.so; do
             if [ -f "$lib" ]; then
               ${STRIP_CMD} --strip-unneeded "$lib"
-              ./upx-4.2.2-amd64_linux/upx --best --lzma --brute "$lib" || true
+              ./upx-4.2.2-amd64_linux/upx --best "$lib" 2>/dev/null || true
             fi
           done
           
@@ -640,8 +609,8 @@ jobs:
             -DCMAKE_OSX_SYSROOT=${{ matrix.sdk }} \
             -DCMAKE_OSX_ARCHITECTURES=$ARCH \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="-Os -ffunction-sections -fdata-sections -flto" \
-            -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections -flto" \
+            -DCMAKE_C_FLAGS="-Os -ffunction-sections -fdata-sections" \
+            -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections" \
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
           
