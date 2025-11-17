@@ -52,38 +52,36 @@ jobs:
           cmake .. -DCMAKE_BUILD_TYPE=Release -A x64 -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release
           
-      - name: Setup LLVM strip and compression tools
+      - name: Setup LLVM strip and UPX
         shell: pwsh
         run: |
-          choco install llvm 7zip -y
+          choco install llvm -y
           refreshenv
           Invoke-WebRequest -Uri "https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-win64.zip" -OutFile "upx.zip"
           Expand-Archive -Path "upx.zip" -DestinationPath "."
           Move-Item "upx-*/upx.exe" "upx.exe" -Force
 
-      - name: Collect and Ultra Compress Windows Libraries
+      - name: Collect and Compress Windows Libraries
         shell: pwsh
         run: |
           mkdir -p artifacts/windows-x64/lib
           Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/
           Copy-Item luau-build/build-release/Release/*.dll artifacts/windows-x64/lib/ -ErrorAction SilentlyContinue
 
-      - name: Strip and Ultra Compress Windows libraries
+      - name: Strip and UPX Compress Windows libraries
         shell: pwsh
         run: |
           $strip = "${env:ProgramFiles}\LLVM\bin\llvm-strip.exe"
           $upxPath = Join-Path $PWD "upx.exe"
           $arPath = "${env:ProgramFiles}\LLVM\bin\llvm-ar.exe"
           
-          if (Test-Path $strip) {
-            Get-ChildItem artifacts/windows-x64/lib -Filter "*.lib" | ForEach-Object { 
-              & $strip --strip-debug $_.FullName 
-              & $strip --strip-unneeded $_.FullName 
-            }
-            Get-ChildItem artifacts/windows-x64/lib -Filter "*.dll" | ForEach-Object { 
-              & $strip --strip-debug $_.FullName 
-              & $strip --strip-unneeded $_.FullName 
-            }
+          Get-ChildItem artifacts/windows-x64/lib -Filter "*.lib" | ForEach-Object { 
+            & $strip --strip-debug $_.FullName 
+            & $strip --strip-unneeded $_.FullName 
+          }
+          Get-ChildItem artifacts/windows-x64/lib -Filter "*.dll" | ForEach-Object { 
+            & $strip --strip-debug $_.FullName 
+            & $strip --strip-unneeded $_.FullName 
           }
           
           Get-ChildItem artifacts/windows-x64/lib -File | ForEach-Object {
@@ -108,28 +106,12 @@ jobs:
                 Remove-Item $libPath -Force
                 & $arPath rcs $libPath *.obj
                 
-                $newSizeMB = [math]::Round((Get-Item $libPath).Length / 1MB, 2)
-                if ($newSizeMB -gt 90) {
-                  Write-Host "Using 7z compression for $libName"
-                  $tempFile = "$libPath.tmp"
-                  & 7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on $tempFile $libPath
-                  Move-Item $tempFile $libPath -Force
-                }
-                
                 Pop-Location
               } finally {
                 Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
               }
             } elseif ($_.Extension -eq ".dll") {
               & $upxPath --best --lzma --brute $_.FullName
-              
-              $newSizeMB = [math]::Round((Get-Item $_.FullName).Length / 1MB, 2)
-              if ($newSizeMB -gt 90) {
-                Write-Host "UPX not enough, using 7z compression method for $($_.Name)"
-                $tempFile = "$($_.FullName).tmp"
-                & 7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on $tempFile $_.FullName
-                Move-Item $tempFile $_.FullName -Force
-              }
             }
             
             $finalSizeMB = [math]::Round((Get-Item $_.FullName).Length / 1MB, 2)
@@ -176,7 +158,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake p7zip-full
+          sudo apt-get install -y build-essential cmake
 
       - name: Build Luau (Linux x64)
         run: |
@@ -186,13 +168,13 @@ jobs:
           cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(nproc)
           
-      - name: Collect and Ultra Compress Linux Libraries
+      - name: Collect and Compress Linux Libraries
         run: |
           mkdir -p artifacts/linux-x64/lib
           find luau-build/build-release -name "*.a" -exec cp {} artifacts/linux-x64/lib/ \;
           find luau-build/build-release -name "*.so" -exec cp {} artifacts/linux-x64/lib/ \; 2>/dev/null || true
 
-      - name: Strip and Ultra Compress Linux libraries
+      - name: Strip and UPX Compress Linux libraries
         run: |
           wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
           tar -xf upx-4.2.2-amd64_linux.tar.xz
@@ -223,15 +205,6 @@ jobs:
             
             rm -f "$lib_abs_path"
             ar rcs "$lib_abs_path" *.o
-            
-            ../upx-4.2.2-amd64_linux/upx --best --lzma --brute "$lib_abs_path" 2>/dev/null || true
-            
-            local sizeMB=$(du -m "$lib_abs_path" | cut -f1)
-            if [ "$sizeMB" -gt 90 ]; then
-              echo "Using 7z compression for $lib_name"
-              7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib_abs_path.tmp" "$lib_abs_path"
-              mv "$lib_abs_path.tmp" "$lib_abs_path"
-            fi
             
             cd - > /dev/null
             rm -rf "$temp_dir"
@@ -298,7 +271,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install cmake p7zip upx
+          brew install cmake upx
 
       - name: Build Luau (macOS ${{ matrix.arch }})
         run: |
@@ -308,20 +281,19 @@ jobs:
           cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
           
-      - name: Collect and Ultra Compress macOS Libraries
+      - name: Collect and Compress macOS Libraries
         run: |
           mkdir -p artifacts/macos-${{ matrix.arch }}/lib
           find luau-build/build-release-${{ matrix.arch }} -name "*.a" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \;
           find luau-build/build-release-${{ matrix.arch }} -name "*.dylib" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \; 2>/dev/null || true
 
-      - name: Strip and Ultra Compress macOS libraries
+      - name: Strip and UPX Compress macOS libraries
         run: |
           UPX_BINARY=$(which upx)
           if [ -z "$UPX_BINARY" ]; then
             echo "ERROR: UPX not found"
             exit 1
           fi
-          echo "Using UPX binary: $UPX_BINARY"
           
           compress_static_lib() {
             local lib="$1"
@@ -349,15 +321,6 @@ jobs:
             
             rm -f "$lib_abs_path"
             ar rcs "$lib_abs_path" *.o
-            
-            "$UPX_BINARY" --best --lzma --brute "$lib_abs_path" 2>/dev/null || true
-            
-            local sizeMB=$(du -m "$lib_abs_path" | cut -f1)
-            if [ "$sizeMB" -gt 90 ]; then
-              echo "Using 7z compression for $lib_name"
-              7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib_abs_path.tmp" "$lib_abs_path"
-              mv "$lib_abs_path.tmp" "$lib_abs_path"
-            fi
             
             cd - > /dev/null
             rm -rf "$temp_dir"
@@ -427,11 +390,6 @@ jobs:
         with:
           ndk-version: r25c
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y p7zip-full xz-utils
-
       - name: Build Luau (Android ${{ matrix.abi }})
         run: |
           cd luau-build
@@ -452,13 +410,13 @@ jobs:
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(nproc)
           
-      - name: Collect and Ultra Compress Android Libraries
+      - name: Collect and Compress Android Libraries
         run: |
           mkdir -p artifacts/android-${{ matrix.abi }}/lib
           find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \;
           find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \; 2>/dev/null || true
 
-      - name: Strip and Compress Android libraries
+      - name: Strip and UPX Compress Android libraries
         run: |
           case "${{ matrix.abi }}" in
             armv7) TRIPLE=armv7a-linux-androideabi;;
@@ -471,45 +429,12 @@ jobs:
           wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
           tar -xf upx-4.2.2-amd64_linux.tar.xz
           
-          safe_compress() {
-            local file="$1"
-            local backup="$file.backup"
-            local original_size=$(stat -c%s "$file")
-            
-            echo "Processing: $(basename "$file") ($(echo "scale=2; $original_size/1048576" | bc) MB)"
-            
-            cp "$file" "$backup"
-            
-            if ./upx-4.2.2-amd64_linux/upx --best --lzma "$file" 2>/dev/null; then
-              if [ -s "$file" ]; then
-                compressed_size=$(stat -c%s "$file")
-                echo "  UPX compressed to $(echo "scale=2; $compressed_size/1048576" | bc) MB"
-              else
-                echo "  UPX failed, restoring backup"
-                mv "$backup" "$file"
-              fi
-            else
-              echo "  UPX failed, restoring backup"
-              mv "$backup" "$file"
-            fi
-            
-            if [ -f "$backup" ]; then
-              rm -f "$backup"
-            fi
-          }
-          
           for lib in artifacts/android-${{ matrix.abi }}/lib/*.a; do
             if [ -f "$lib" ]; then
+              echo "Processing static library: $(basename "$lib")"
               ${STRIP_CMD} --strip-debug "$lib" 2>/dev/null || true
               ${STRIP_CMD} --strip-unneeded "$lib" 2>/dev/null || true
-              
-              safe_compress "$lib"
-              
-              sizeMB=$(du -m "$lib" | cut -f1)
-              if [ "$sizeMB" -gt 90 ]; then
-                echo "Using 7z compression for $(basename "$lib")"
-                7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib.7z" "$lib"
-              fi
+              ./upx-4.2.2-amd64_linux/upx --best --lzma "$lib" 2>/dev/null || true
             fi
           done
           
@@ -517,7 +442,7 @@ jobs:
             if [ -f "$lib" ]; then
               ${STRIP_CMD} --strip-debug "$lib" 2>/dev/null || true
               ${STRIP_CMD} --strip-unneeded "$lib" 2>/dev/null || true
-              safe_compress "$lib"
+              ./upx-4.2.2-amd64_linux/upx --best --lzma "$lib" 2>/dev/null || true
             fi
           done
           
@@ -568,7 +493,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install cmake p7zip upx
+          brew install cmake upx
 
       - name: Build Luau (iOS ${{ matrix.sdk }})
         run: |
@@ -592,19 +517,18 @@ jobs:
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
           
-      - name: Collect and Ultra Compress iOS Libraries
+      - name: Collect and Compress iOS Libraries
         run: |
           mkdir -p artifacts/ios-${{ matrix.sdk }}/lib
           cp luau-build/build-ios-${{ matrix.sdk }}/Release/*.a artifacts/ios-${{ matrix.sdk }}/lib/ 2>/dev/null || true
 
-      - name: Strip and Ultra Compress iOS libraries
+      - name: Strip and UPX Compress iOS libraries
         run: |
           UPX_BINARY=$(which upx)
           if [ -z "$UPX_BINARY" ]; then
             echo "ERROR: UPX not found"
             exit 1
           fi
-          echo "Using UPX binary: $UPX_BINARY"
           
           compress_static_lib() {
             local lib="$1"
@@ -632,15 +556,6 @@ jobs:
             
             rm -f "$lib_abs_path"
             ar rcs "$lib_abs_path" *.o
-            
-            "$UPX_BINARY" --best --lzma --brute "$lib_abs_path" 2>/dev/null || true
-            
-            local sizeMB=$(du -m "$lib_abs_path" | cut -f1)
-            if [ "$sizeMB" -gt 90 ]; then
-              echo "Using 7z compression for $lib_name"
-              7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib_abs_path.tmp" "$lib_abs_path"
-              mv "$lib_abs_path.tmp" "$lib_abs_path"
-            fi
             
             cd - > /dev/null
             rm -rf "$temp_dir"
