@@ -465,23 +465,13 @@ jobs:
 
           # Install compression tools (on ubuntu runner)
           sudo apt-get update
-          sudo apt-get install -y upx xz-utils || true
+          sudo apt-get install -y upx-ucl || true
 
-          # Compress shared libraries with UPX (aggressive)
-          find lib/luau/lib -type f \( -name "*.so" -o -name "*.dll" -o -name "*.dylib" \) -print0 | while IFS= read -r -d '' f; do
+          # Compress all libraries with UPX (aggressive)
+          # UPX can compress both static and shared libraries transparently
+          find lib/luau/lib -type f \( -name "*.so" -o -name "*.dll" -o -name "*.dylib" -o -name "*.a" -o -name "*.lib" \) -print0 | while IFS= read -r -d '' f; do
             echo "Attempting UPX compress: $f"
-            upx --best --ultra-brute "$f" || true
-          done
-
-          # Compress static archives (.a and .lib) with xz (extreme)
-          find lib/luau/lib -type f \( -name "*.a" -o -name "*.lib" \) -print0 | while IFS= read -r -d '' f; do
-            echo "Compressing static archive with xz: $f"
-            xz -9e -T0 -c "$f" > "${f}.xz" && rm -f "$f" || true
-          done
-
-          # Rename compressed files to remove .xz extension
-          find lib/luau/lib -name "*.xz" -type f | while read file; do
-            mv "$file" "${file%.xz}"
+            upx --best --lzma "$f" || true
           done
 
           # Optional: list compressed files for logs
