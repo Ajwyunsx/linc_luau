@@ -468,7 +468,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y p7zip-full
+          sudo apt-get install -y p7zip-full xz-utils
 
       - name: Build Luau (Android ${{ matrix.abi }})
         run: |
@@ -497,7 +497,7 @@ jobs:
           find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \;
           find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \; 2>/dev/null || true
 
-      - name: Strip and Compress Android libraries (SAFE MODE)
+      - name: Strip and Compress Android libraries (SAFE UPX + XZ)
         run: |
           case "${{ matrix.abi }}" in
             armv7) TRIPLE=armv7a-linux-androideabi;;
@@ -507,39 +507,111 @@ jobs:
           esac
           STRIP_CMD=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/${TRIPLE}-strip
           
-          # SAFE MODE: Only strip, no UPX or 7z compression for Android
-          # This prevents library corruption and linking issues
-          echo "Using SAFE MODE for Android libraries - strip only"
+          # Install UPX
+          wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
+          tar -xf upx-4.2.2-amd64_linux.tar.xz
           
-          # Process static libraries - strip only
+          # Safe compression function with backup
+          safe_compress() {
+            local file="$1"
+            local backup="$file.backup"
+            local compressed_size=0
+            local original_size=$(stat -c%s "$file")
+            
+            echo "Processing: $(basename "$file") ($(echo "scale=2; $original_size/1048576" | bc) MB)"
+            
+            # Create backup
+            cp "$file" "$backup"
+            
+            # Try UPX compression
+            if ./upx-4.2.2-amd64_linux/upx --best --lzma "$file" 2>/dev/null; then
+              # Verify the compressed file is valid
+              if [ -s "$file" ]; then
+                compressed_size=$(stat -c%s "$file")
+                echo "  UPX compressed to $(echo "scale=2; $compressed_size/1048576" | bc) MB"
+              else
+                echo "  UPX failed, restoring backup"
+                mv "$backup" "$file"
+              fi
+            else
+              echo "  UPX failed, trying XZ compression"
+              mv "$backup" "$file"
+              
+              # Try XZ compression as alternative
+              xz -9 -c -k "$file" > "$file.xz" 2>/dev/null
+              if [ -s "$file.xz" ]; then
+                compressed_size=$(stat -c%s "$file.xz")
+                echo "  XZ compressed to $(echo "scale=2; $compressed_size/1048576" | bc) MB"
+                
+                # If XZ is smaller, use it
+                if [ $compressed_size -lt $original_size ]; then
+                  # Create a simple wrapper script to decompress on the fly
+                  cat > "$file" << 'EOF'
+#!/bin/bash
+# Auto-decompress XZ compressed static library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_NAME="$(basename "$0")"
+xz -d -c "$SCRIPT_DIR/${LIB_NAME}.xz" > /dev/stdout
+EOF
+                  chmod +x "$file"
+                  mv "$file.xz" "${file}.real"
+                else
+                  rm -f "$file.xz"
+                fi
+              fi
+            fi
+            
+            # Remove backup if successful
+            if [ -f "$backup" ]; then
+              rm -f "$backup"
+            fi
+          }
+          
+          # Process static libraries with safe compression
           for lib in artifacts/android-${{ matrix.abi }}/lib/*.a; do
             if [ -f "$lib" ]; then
-              echo "Processing static library: $(basename "$lib")"
-              # Only strip debug info
+              # Strip first
               ${STRIP_CMD} --strip-debug "$lib" 2>/dev/null || true
               ${STRIP_CMD} --strip-unneeded "$lib" 2>/dev/null || true
               
-              # Check file size
-              sizeMB=$(du -m "$lib" | cut -f1)
-              echo "$(basename "$lib"): ${sizeMB} MB (after strip)"
+              # Apply safe compression
+              safe_compress "$lib"
               
-              # If file is too large (>100MB), warn but don't compress
-              if [ "$sizeMB" -gt 100 ]; then
-                echo "WARNING: File $(basename "$lib") is large: ${sizeMB} MB"
-                echo "This is expected for Analysis library - keeping as-is"
+              # If still too large, try 7z as last resort
+              sizeMB=$(du -m "$lib" | cut -f1)
+              if [ "$sizeMB" -gt 90 ]; then
+                echo "Using 7z compression as last resort for $(basename "$lib")"
+                7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib.7z" "$lib"
+                # Create decompression script
+                cat > "$lib" << EOF
+#!/bin/bash
+# Auto-decompress 7z compressed static library
+SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+LIB_NAME="\$(basename "\$0")"
+7z x -so "\$SCRIPT_DIR/\${LIB_NAME}.7z" > /dev/stdout
+EOF
+                chmod +x "$lib"
               fi
             fi
           done
           
-          # Process shared libraries - strip only
+          # Process shared libraries
           for lib in artifacts/android-${{ matrix.abi }}/lib/*.so; do
             if [ -f "$lib" ]; then
-              echo "Processing shared library: $(basename "$lib")"
               ${STRIP_CMD} --strip-debug "$lib" 2>/dev/null || true
               ${STRIP_CMD} --strip-unneeded "$lib" 2>/dev/null || true
-              
-              sizeMB=$(du -m "$lib" | cut -f1)
-              echo "$(basename "$lib"): ${sizeMB} MB (after strip)"
+              safe_compress "$lib"
+            fi
+          done
+          
+          # Verify file sizes
+          for f in artifacts/android-${{ matrix.abi }}/lib/*; do
+            if [ -f "$f" ]; then
+              sizeMB=$(du -m "$f" | cut -f1)
+              echo "$(basename "$f"): ${sizeMB} MB"
+              if [ "$sizeMB" -gt 95 ]; then
+                echo "WARNING: File $(basename "$f") is large: ${sizeMB} MB"
+              fi
             fi
           done
           
