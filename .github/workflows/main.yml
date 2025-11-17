@@ -547,12 +547,12 @@ jobs:
                 if [ $compressed_size -lt $original_size ]; then
                   # Create a simple wrapper script to decompress on the fly
                   cat > "$file" << 'EOF'
-#!/bin/bash
-# Auto-decompress XZ compressed static library
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LIB_NAME="$(basename "$0")"
-xz -d -c "$SCRIPT_DIR/${LIB_NAME}.xz" > /dev/stdout
-EOF
+                #!/bin/bash
+                # Auto-decompress XZ compressed static library
+                SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+                LIB_NAME="$(basename "$0")"
+                xz -d -c "$SCRIPT_DIR/${LIB_NAME}.xz" > /dev/stdout
+                EOF
                   chmod +x "$file"
                   mv "$file.xz" "${file}.real"
                 else
@@ -584,12 +584,12 @@ EOF
                 7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib.7z" "$lib"
                 # Create decompression script
                 cat > "$lib" << EOF
-#!/bin/bash
-# Auto-decompress 7z compressed static library
-SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-LIB_NAME="\$(basename "\$0")"
-7z x -so "\$SCRIPT_DIR/\${LIB_NAME}.7z" > /dev/stdout
-EOF
+                #!/bin/bash
+                # Auto-decompress 7z compressed static library
+                SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+                LIB_NAME="\$(basename "\$0")"
+                7z x -so "\$SCRIPT_DIR/\${LIB_NAME}.7z" > /dev/stdout
+                EOF
                 chmod +x "$lib"
               fi
             fi
