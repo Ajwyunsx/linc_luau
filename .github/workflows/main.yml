@@ -16,7 +16,6 @@ on:
 
 env:
   UPX_VERSION: "4.2.4"
-  SEVEN_ZIP_FLAGS: "-t7z -mx=9 -myx=9 -ms=on -md=64m -mfb=256 -mmt=on"
 
 jobs:
   build-windows:
@@ -66,41 +65,51 @@ jobs:
           Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/
           Copy-Item luau-build/build-release/Release/*.dll artifacts/windows-x64/lib/ -ErrorAction SilentlyContinue
 
-      - name: Ultra compress libraries
+      - name: Ultra compress libraries (EXTREME)
         shell: pwsh
-        env:
-          SEVEN_ZIP_FLAGS: ${{ env.SEVEN_ZIP_FLAGS }}
         run: |
-          $llvmDir = "${env:ProgramFiles}\LLVM\bin"
-          $strip = Join-Path $llvmDir "llvm-strip.exe"
-          $sevenZ = (Get-Command 7z).Source
+          $strip = "${env:ProgramFiles}\LLVM\bin\llvm-strip.exe"
+          $ar = "${env:ProgramFiles}\LLVM\bin\llvm-ar.exe"
+          $upx = "C:\tools\upx.exe"
           
+          # Process each library file EXTREMELY
           Get-ChildItem artifacts/windows-x64/lib -File | ForEach-Object {
             $file = $_
-            & $strip --strip-debug $file.FullName 2>$null
-            & $strip --strip-unneeded $file.FullName 2>$null
-            
-            $originalSize = [math]::Round($file.Length / 1MB, 2)
+            Write-Host "Processing $($file.Name) aggressively..."
             
             if ($file.Extension -eq ".lib") {
-              if ($originalSize -gt 80) {
-                & $sevenZ a $env:SEVEN_ZIP_FLAGS "$($file.FullName).tmp" $file.FullName
-                Move-Item "$($file.FullName).tmp" $file.FullName -Force
+              # STATIC LIB: Extract objects → Strip → UPX objects → Re-archive
+              $tempDir = Join-Path $env:TEMP "compress_$(Get-Random)"
+              New-Item -ItemType Directory -Path $tempDir -Force
+              
+              try {
+                Push-Location $tempDir
+                # Extract
+                & $ar x $file.FullName
+                # Strip and UPX each object
+                Get-ChildItem -Filter "*.obj" | ForEach-Object {
+                  & $strip --strip-unneeded $_.FullName 2>$null
+                  & $upx --ultra-brute --lzma $_.FullName 2>$null
+                }
+                # Re-create archive
+                Remove-Item $file.FullName -Force
+                & $ar rcs $file.FullName *.obj
+                Pop-Location
+              } finally {
+                Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
               }
             } else {
-              & C:\tools\upx.exe --ultra-brute $file.FullName 2>$null
-              $newSize = [math]::Round((Get-Item $file.FullName).Length / 1MB, 2)
-              if ($newSize -gt 90) {
-                & $sevenZ a $env:SEVEN_ZIP_FLAGS "$($file.FullName).tmp" $file.FullName
-                Move-Item "$($file.FullName).tmp" $file.FullName -Force
-              }
+              # SHARED LIB: Strip → UPX
+              & $strip --strip-debug $file.FullName 2>$null
+              & $strip --strip-unneeded $file.FullName 2>$null
+              & $upx --ultra-brute --lzma $file.FullName 2>$null
             }
             
-            $finalSize = [math]::Round((Get-Item $file.FullName).Length / 1MB, 2)
-            Write-Host "$($file.Name): $originalSize MB → $finalSize MB"
+            $finalSizeMB = [math]::Round((Get-Item $file.FullName).Length / 1MB, 2)
+            Write-Host "$($file.Name): ${finalSizeMB} MB"
             
-            if ($finalSize -gt 95) {
-              Write-Error "$($file.Name) too large: $finalSize MB"
+            if ($finalSizeMB -gt 95) {
+              Write-Error "File too large: $($file.Name) (${finalSizeMB}MB)"
               exit 1
             }
           }
@@ -112,7 +121,7 @@ jobs:
           path: artifacts/windows-x64/
 
   build-linux:
-    runs-on: ubuntu-latest
+    runs-ons: ubuntu-latest
     steps:
       - name: Clone Luau repository
         run: |
@@ -150,28 +159,36 @@ jobs:
           find luau-build/build-release -name "*.a" -exec cp {} artifacts/linux-x64/lib/ \;
           find luau-build/build-release -name "*.so" -exec cp {} artifacts/linux-x64/lib/ \; 2>/dev/null || true
 
-      - name: Ultra compress libraries
-        env:
-          SEVEN_ZIP_FLAGS: ${{ env.SEVEN_ZIP_FLAGS }}
+      - name: Ultra compress libraries (EXTREME)
         run: |
           export JOBS=$(nproc)
           
-          find artifacts/linux-x64/lib -name "*.a" -size +80M | xargs -P $JOBS -I {} bash -c '
-            strip --strip-unneeded {} 2>/dev/null
-            7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+          # Process static libraries: Extract → Strip → UPX objects → Re-archive
+          find artifacts/linux-x64/lib -name "*.a" | xargs -P $JOBS -I {} bash -c '
+            lib="{}"
+            temp_dir=$(mktemp -d)
+            cd "$temp_dir"
+            ar x "$lib"
+            strip --strip-unneeded *.o 2>/dev/null
+            upx --ultra-brute --lzma *.o 2>/dev/null || true
+            rm -f "$lib"
+            ar rcs "$lib" *.o
+            cd - > /dev/null
+            rm -rf "$temp_dir"
           '
           
+          # Process shared libraries: Strip → UPX
           find artifacts/linux-x64/lib -name "*.so" | xargs -P $JOBS -I {} bash -c '
-            strip --strip-unneeded {} 2>/dev/null
-            upx --ultra-brute {} 2>/dev/null || true
-            [ $(stat -c%s {}) -gt 94371840 ] && 7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+            strip --strip-unneeded {}
+            upx --ultra-brute --lzma {} 2>/dev/null || true
           '
           
+          # Verify all files
           find artifacts/linux-x64/lib -type f -exec bash -c '
             size=$(stat -c%s $1)
             sizeMB=$((size / 1048576))
-            echo "$1: ${sizeMB}MB"
-            [ $size -lt 99614720 ] || exit 1
+            printf "%-80s %6dMB\n" "$1" $sizeMB
+            [ $size -lt 99614720 ] || { echo "ERROR: File too large"; exit 1; }
           ' _ {} \;
 
       - name: Upload Linux Artifacts
@@ -219,27 +236,32 @@ jobs:
           find luau-build/build-${{ matrix.arch }} -name "*.a" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \;
           find luau-build/build-${{ matrix.arch }} -name "*.dylib" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \; 2>/dev/null || true
 
-      - name: Ultra compress libraries
-        env:
-          SEVEN_ZIP_FLAGS: ${{ env.SEVEN_ZIP_FLAGS }}
+      - name: Ultra compress libraries (EXTREME)
         run: |
           JOBS=$(sysctl -n hw.ncpu)
           
-          find artifacts/macos-${{ matrix.arch }}/lib -name "*.a" -size +80M | xargs -P $JOBS -I {} bash -c '
-            strip -S -x {} 2>/dev/null
-            7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+          find artifacts/macos-${{ matrix.arch }}/lib -name "*.a" | xargs -P $JOBS -I {} bash -c '
+            lib="{}"
+            temp_dir=$(mktemp -d)
+            cd "$temp_dir"
+            ar x "$lib"
+            strip -S -x *.o 2>/dev/null
+            upx --ultra-brute --lzma *.o 2>/dev/null || true
+            rm -f "$lib"
+            ar rcs "$lib" *.o
+            cd - > /dev/null
+            rm -rf "$temp_dir"
           '
           
           find artifacts/macos-${{ matrix.arch }}/lib -name "*.dylib" | xargs -P $JOBS -I {} bash -c '
             strip -S -x {} 2>/dev/null
-            upx --ultra-brute {} 2>/dev/null || true
-            [ $(stat -f%z {}) -gt 94371840 ] && 7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+            upx --ultra-brute --lzma {} 2>/dev/null || true
           '
           
           find artifacts/macos-${{ matrix.arch }}/lib -type f -exec bash -c '
             size=$(stat -f%z $1)
             sizeMB=$((size / 1048576))
-            echo "$1: ${sizeMB}MB"
+            printf "%-80s %6dMB\n" "$1" $sizeMB
             [ $size -lt 99614720 ] || exit 1
           ' _ {} \;
 
@@ -306,9 +328,7 @@ jobs:
           find luau-build/build-${{ matrix.abi }} -name "*.a" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \;
           find luau-build/build-${{ matrix.abi }} -name "*.so" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \; 2>/dev/null || true
 
-      - name: Ultra compress libraries
-        env:
-          SEVEN_ZIP_FLAGS: ${{ env.SEVEN_ZIP_FLAGS }}
+      - name: Ultra compress libraries (EXTREME)
         run: |
           case "${{ matrix.abi }}" in
             armv7) TRIPLE=armv7a-linux-androideabi;;
@@ -320,21 +340,28 @@ jobs:
           
           JOBS=$(nproc)
           
-          find artifacts/android-${{ matrix.abi }}/lib -name "*.a" -size +80M | xargs -P $JOBS -I {} bash -c '
-            $STRIP --strip-unneeded {} 2>/dev/null
-            7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+          find artifacts/android-${{ matrix.abi }}/lib -name "*.a" | xargs -P $JOBS -I {} bash -c '
+            lib="{}"
+            temp_dir=$(mktemp -d)
+            cd "$temp_dir"
+            ar x "$lib"
+            $STRIP --strip-unneeded *.o 2>/dev/null
+            upx --ultra-brute --lzma *.o 2>/dev/null || true
+            rm -f "$lib"
+            ar rcs "$lib" *.o
+            cd - > /dev/null
+            rm -rf "$temp_dir"
           '
           
           find artifacts/android-${{ matrix.abi }}/lib -name "*.so" | xargs -P $JOBS -I {} bash -c '
             $STRIP --strip-unneeded {}
-            upx --ultra-brute {} 2>/dev/null || true
-            [ $(stat -c%s {}) -gt 94371840 ] && 7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+            upx --ultra-brute --lzma {} 2>/dev/null || true
           '
           
           find artifacts/android-${{ matrix.abi }}/lib -type f -exec bash -c '
             size=$(stat -c%s $1)
             sizeMB=$((size / 1048576))
-            echo "$1: ${sizeMB}MB"
+            printf "%-80s %6dMB\n" "$1" $sizeMB
             [ $size -lt 99614720 ] || exit 1
           ' _ {} \;
 
@@ -388,21 +415,27 @@ jobs:
           mkdir -p artifacts/ios-${{ matrix.sdk }}/lib
           find luau-build/build-${{ matrix.sdk }} -name "*.a" -exec cp {} artifacts/ios-${{ matrix.sdk }}/lib/ \;
 
-      - name: Ultra compress libraries
-        env:
-          SEVEN_ZIP_FLAGS: ${{ env.SEVEN_ZIP_FLAGS }}
+      - name: Ultra compress libraries (EXTREME)
         run: |
           JOBS=$(sysctl -n hw.ncpu)
           
-          find artifacts/ios-${{ matrix.sdk }}/lib -name "*.a" -size +80M | xargs -P $JOBS -I {} bash -c '
-            xcrun strip -S -x {} 2>/dev/null
-            7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+          find artifacts/ios-${{ matrix.sdk }}/lib -name "*.a" | xargs -P $JOBS -I {} bash -c '
+            lib="{}"
+            temp_dir=$(mktemp -d)
+            cd "$temp_dir"
+            ar x "$lib"
+            xcrun strip -S -x *.o 2>/dev/null
+            upx --ultra-brute --lzma *.o 2>/dev/null || true
+            rm -f "$lib"
+            ar rcs "$lib" *.o
+            cd - > /dev/null
+            rm -rf "$temp_dir"
           '
           
           find artifacts/ios-${{ matrix.sdk }}/lib -type f -exec bash -c '
             size=$(stat -f%z $1)
             sizeMB=$((size / 1048576))
-            echo "$1: ${sizeMB}MB"
+            printf "%-80s %6dMB\n" "$1" $sizeMB
             [ $size -lt 99614720 ] || exit 1
           ' _ {} \;
 
