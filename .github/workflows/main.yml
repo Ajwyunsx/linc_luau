@@ -67,8 +67,49 @@ jobs:
         shell: pwsh
         run: |
           mkdir -p artifacts/windows-x64/lib
-          Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/
-          Copy-Item luau-build/build-release/Release/*.dll artifacts/windows-x64/lib/ -ErrorAction SilentlyContinue
+          
+          # Debug: Show build directory contents
+          Write-Host "Build directory contents:"
+          if (Test-Path "luau-build/build-release/Release") {
+            Get-ChildItem "luau-build/build-release/Release" | ForEach-Object { Write-Host "  $($_.Name)" }
+          } else {
+            Write-Host "  Release directory not found"
+            if (Test-Path "luau-build/build-release") {
+              Get-ChildItem "luau-build/build-release" | ForEach-Object { Write-Host "  $($_.Name)" }
+            }
+          }
+          
+          # Copy static libraries with verification
+          Write-Host "Copying static libraries..."
+          if (Test-Path "luau-build/build-release/Release/*.lib") {
+            Get-ChildItem "luau-build/build-release/Release/*.lib" | ForEach-Object {
+              Write-Host "  Found: $($_.Name)"
+              Copy-Item $_.FullName "artifacts/windows-x64/lib/"
+              Write-Host "  Copied to: artifacts/windows-x64/lib/$($_.Name)"
+            }
+          } else {
+            Write-Host "  No .lib files found"
+          }
+          
+          # Copy shared libraries with verification
+          Write-Host "Copying shared libraries..."
+          if (Test-Path "luau-build/build-release/Release/*.dll") {
+            Get-ChildItem "luau-build/build-release/Release/*.dll" | ForEach-Object {
+              Write-Host "  Found: $($_.Name)"
+              Copy-Item $_.FullName "artifacts/windows-x64/lib/"
+              Write-Host "  Copied to: artifacts/windows-x64/lib/$($_.Name)"
+            }
+          } else {
+            Write-Host "  No .dll files found"
+          }
+          
+          # Verify copied files
+          Write-Host "Files in artifacts directory:"
+          if (Test-Path "artifacts/windows-x64/lib") {
+            Get-ChildItem "artifacts/windows-x64/lib" | ForEach-Object { Write-Host "  $($_.Name)" }
+          } else {
+            Write-Host "  Artifacts directory is empty"
+          }
           
           $strip = "${env:ProgramFiles}\LLVM\bin\llvm-strip.exe"
           $upxPath = Join-Path $PWD "upx.exe"
@@ -87,6 +128,15 @@ jobs:
           
           function Compress-StaticLibrary {
             param([string]$LibraryPath, [string]$LibraryName)
+            
+            Write-Host "Processing static library: $LibraryName"
+            Write-Host "Full path: $LibraryPath"
+            
+            # Check if file actually exists
+            if (-not (Test-Path $LibraryPath)) {
+              Write-Host "ERROR: File does not exist: $LibraryPath"
+              return
+            }
             
             if (-not (Test-LibraryIntegrity $LibraryPath)) {
               Write-Host "Skipping compression for $LibraryName due to integrity issues"
@@ -133,21 +183,39 @@ jobs:
             }
           }
           
-          # Process static libraries
-          Get-ChildItem artifacts/windows-x64/lib -Filter "*.lib" | ForEach-Object { 
-            Compress-StaticLibrary $_.FullName $_.Name
+          # Process static libraries safely
+          Write-Host "Processing static libraries..."
+          $staticLibs = Get-ChildItem "artifacts/windows-x64/lib" -Filter "*.lib" -ErrorAction SilentlyContinue
+          if ($staticLibs) {
+            $staticLibs | ForEach-Object { 
+              Compress-StaticLibrary $_.FullName $_.Name
+            }
+          } else {
+            Write-Host "No .lib files found to process"
           }
           
-          # Process shared libraries
-          Get-ChildItem artifacts/windows-x64/lib -Filter "*.dll" | ForEach-Object { 
-            & $strip --strip-debug --strip-unneeded $_.FullName 2>$null
-            & $upxPath --best --lzma --brute $_.FullName 2>$null
+          # Process shared libraries safely
+          Write-Host "Processing shared libraries..."
+          $dllFiles = Get-ChildItem "artifacts/windows-x64/lib" -Filter "*.dll" -ErrorAction SilentlyContinue
+          if ($dllFiles) {
+            $dllFiles | ForEach-Object { 
+              & $strip --strip-debug --strip-unneeded $_.FullName 2>$null
+              & $upxPath --best --lzma --brute $_.FullName 2>$null
+            }
+          } else {
+            Write-Host "No .dll files found to process"
           }
           
           # Final size verification
-          Get-ChildItem artifacts/windows-x64/lib -File | ForEach-Object {
-            $sizeMB = [math]::Round($_.Length / 1MB, 2)
-            Write-Host "$($_.Name): $sizeMB MB"
+          Write-Host "Library file sizes:"
+          $allFiles = Get-ChildItem "artifacts/windows-x64/lib" -File -ErrorAction SilentlyContinue
+          if ($allFiles) {
+            $allFiles | ForEach-Object {
+              $sizeMB = [math]::Round($_.Length / 1MB, 2)
+              Write-Host "$($_.Name): $sizeMB MB"
+            }
+          } else {
+            Write-Host "No files found in artifacts directory"
           }
           
       - name: Upload Windows Artifacts
@@ -205,8 +273,36 @@ jobs:
       - name: Collect and Compress Linux Libraries
         run: |
           mkdir -p artifacts/linux-x64/lib
-          find luau-build/build-release -name "*.a" -exec cp {} artifacts/linux-x64/lib/ \;
-          find luau-build/build-release -name "*.so" -exec cp {} artifacts/linux-x64/lib/ \; 2>/dev/null || true
+          
+          # Debug: Show build directory contents
+          echo "Build directory contents:"
+          ls -la luau-build/build-release/ 2>/dev/null || echo "Build directory not found"
+          
+          # Copy static libraries with verification
+          echo "Copying static libraries..."
+          find luau-build/build-release -name "*.a" -exec sh -c '
+            for file do
+              echo "Found static library: $file"
+              target="artifacts/linux-x64/lib/$(basename "$file")"
+              cp "$file" "$target"
+              echo "Copied to: $target"
+            done
+          ' sh {} +
+          
+          # Copy shared libraries with verification
+          echo "Copying shared libraries..."
+          find luau-build/build-release -name "*.so" -exec sh -c '
+            for file do
+              echo "Found shared library: $file"
+              target="artifacts/linux-x64/lib/$(basename "$file")"
+              cp "$file" "$target"
+              echo "Copied to: $target"
+            done
+          ' sh {} +
+          
+          # Verify copied files
+          echo "Files in artifacts directory:"
+          ls -la artifacts/linux-x64/lib/ 2>/dev/null || echo "No files found in artifacts directory"
           
           # Function to verify library integrity
           verify_library() {
@@ -225,6 +321,14 @@ jobs:
             local lib_name=$(basename "$lib")
             
             echo "Processing static library: $lib_name"
+            echo "Full path: $lib"
+            
+            # Check if file actually exists
+            if [ ! -f "$lib" ]; then
+              echo "ERROR: File does not exist: $lib"
+              rm -rf "$temp_dir"
+              return 1
+            fi
             
             if ! verify_library "$lib"; then
               echo "Skipping compression for $lib_name due to integrity issues"
@@ -233,7 +337,12 @@ jobs:
             fi
             
             cd "$temp_dir"
-            ar x "$lib"
+            if ! ar x "$lib"; then
+              echo "ERROR: Failed to extract $lib_name"
+              cd - > /dev/null
+              rm -rf "$temp_dir"
+              return 1
+            fi
             
             local object_count=$(find . -name "*.o" | wc -l)
             if [ "$object_count" -eq 0 ]; then
@@ -253,7 +362,12 @@ jobs:
             
             # Recreate the archive
             rm -f "$lib"
-            ar rcs "$lib" *.o
+            if ! ar rcs "$lib" *.o; then
+              echo "ERROR: Failed to recreate $lib_name"
+              cd - > /dev/null
+              rm -rf "$temp_dir"
+              return 1
+            fi
             
             cd - > /dev/null
             rm -rf "$temp_dir"
@@ -268,29 +382,47 @@ jobs:
             return 0
           }
           
-          # Process all static libraries
-          for lib in artifacts/linux-x64/lib/*.a; do
-            if [ -f "$lib" ]; then
-              compress_static_lib "$lib"
-            fi
-          done
+          # Process all static libraries safely
+          echo "Processing static libraries..."
+          if ls artifacts/linux-x64/lib/*.a 1> /dev/null 2>&1; then
+            for lib in artifacts/linux-x64/lib/*.a; do
+              if [ -f "$lib" ]; then
+                compress_static_lib "$lib"
+              else
+                echo "Skipping non-existent file: $lib"
+              fi
+            done
+          else
+            echo "No .a files found to process"
+          fi
           
-          # Process shared libraries
-          for lib in artifacts/linux-x64/lib/*.so; do
-            if [ -f "$lib" ]; then
-              strip --strip-unneeded "$lib" 2>/dev/null || true
-              ./upx-4.2.2-amd64_linux/upx --best --lzma --brute "$lib" 2>/dev/null || true
-            fi
-          done
+          # Process shared libraries safely
+          echo "Processing shared libraries..."
+          if ls artifacts/linux-x64/lib/*.so 1> /dev/null 2>&1; then
+            for lib in artifacts/linux-x64/lib/*.so; do
+              if [ -f "$lib" ]; then
+                strip --strip-unneeded "$lib" 2>/dev/null || true
+                ./upx-4.2.2-amd64_linux/upx --best --lzma --brute "$lib" 2>/dev/null || true
+              else
+                echo "Skipping non-existent file: $lib"
+              fi
+            done
+          else
+            echo "No .so files found to process"
+          fi
           
           # Final size verification
           echo "Library file sizes:"
-          for f in artifacts/linux-x64/lib/*; do
-            if [ -f "$f" ]; then
-              sizeMB=$(du -m "$f" | cut -f1)
-              echo "$(basename "$f"): ${sizeMB} MB"
-            fi
-          done
+          if ls artifacts/linux-x64/lib/* 1> /dev/null 2>&1; then
+            for f in artifacts/linux-x64/lib/*; do
+              if [ -f "$f" ]; then
+                sizeMB=$(du -m "$f" | cut -f1)
+                echo "$(basename "$f"): ${sizeMB} MB"
+              fi
+            done
+          else
+            echo "No files found in artifacts directory"
+          fi
           
       - name: Test Library Functionality
         run: |
@@ -375,8 +507,36 @@ jobs:
       - name: Collect and Compress macOS Libraries
         run: |
           mkdir -p artifacts/macos-${{ matrix.arch }}/lib
-          find luau-build/build-release-${{ matrix.arch }} -name "*.a" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \;
-          find luau-build/build-release-${{ matrix.arch }} -name "*.dylib" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \; 2>/dev/null || true
+          
+          # Debug: Show build directory contents
+          echo "Build directory contents:"
+          ls -la luau-build/build-release-${{ matrix.arch }}/ 2>/dev/null || echo "Build directory not found"
+          
+          # Copy static libraries with verification
+          echo "Copying static libraries..."
+          find luau-build/build-release-${{ matrix.arch }} -name "*.a" -exec sh -c '
+            for file do
+              echo "Found static library: $file"
+              target="artifacts/macos-'"${{ matrix.arch }}"'/lib/$(basename "$file")"
+              cp "$file" "$target"
+              echo "Copied to: $target"
+            done
+          ' sh {} +
+          
+          # Copy shared libraries with verification
+          echo "Copying shared libraries..."
+          find luau-build/build-release-${{ matrix.arch }} -name "*.dylib" -exec sh -c '
+            for file do
+              echo "Found shared library: $file"
+              target="artifacts/macos-'"${{ matrix.arch }}"'/lib/$(basename "$file")"
+              cp "$file" "$target"
+              echo "Copied to: $target"
+            done
+          ' sh {} +
+          
+          # Verify copied files
+          echo "Files in artifacts directory:"
+          ls -la artifacts/macos-${{ matrix.arch }}/lib/ 2>/dev/null || echo "No files found in artifacts directory"
           
           UPX_BINARY=$(which upx)
           if [ -z "$UPX_BINARY" ]; then
@@ -401,6 +561,14 @@ jobs:
             local lib_name=$(basename "$lib")
             
             echo "Processing static library: $lib_name"
+            echo "Full path: $lib"
+            
+            # Check if file actually exists
+            if [ ! -f "$lib" ]; then
+              echo "ERROR: File does not exist: $lib"
+              rm -rf "$temp_dir"
+              return 1
+            fi
             
             if ! verify_library_macos "$lib"; then
               echo "Skipping compression for $lib_name due to integrity issues"
@@ -409,7 +577,12 @@ jobs:
             fi
             
             cd "$temp_dir"
-            ar x "$lib"
+            if ! ar x "$lib"; then
+              echo "ERROR: Failed to extract $lib_name"
+              cd - > /dev/null
+              rm -rf "$temp_dir"
+              return 1
+            fi
             
             local object_count=$(find . -name "*.o" | wc -l)
             if [ "$object_count" -eq 0 ]; then
@@ -429,7 +602,12 @@ jobs:
             
             # Recreate the archive
             rm -f "$lib"
-            ar rcs "$lib" *.o
+            if ! ar rcs "$lib" *.o; then
+              echo "ERROR: Failed to recreate $lib_name"
+              cd - > /dev/null
+              rm -rf "$temp_dir"
+              return 1
+            fi
             
             cd - > /dev/null
             rm -rf "$temp_dir"
@@ -444,29 +622,47 @@ jobs:
             return 0
           }
           
-          # Process all static libraries
-          for lib in artifacts/macos-${{ matrix.arch }}/lib/*.a; do
-            if [ -f "$lib" ]; then
-              compress_static_lib_macos "$lib"
-            fi
-          done
+          # Process all static libraries safely
+          echo "Processing static libraries..."
+          if ls artifacts/macos-${{ matrix.arch }}/lib/*.a 1> /dev/null 2>&1; then
+            for lib in artifacts/macos-${{ matrix.arch }}/lib/*.a; do
+              if [ -f "$lib" ]; then
+                compress_static_lib_macos "$lib"
+              else
+                echo "Skipping non-existent file: $lib"
+              fi
+            done
+          else
+            echo "No .a files found to process"
+          fi
           
-          # Process shared libraries
-          for lib in artifacts/macos-${{ matrix.arch }}/lib/*.dylib; do
-            if [ -f "$lib" ]; then
-              strip -S -x "$lib" 2>/dev/null || true
-              "$UPX_BINARY" --best --lzma --brute "$lib" 2>/dev/null || true
-            fi
-          done
+          # Process shared libraries safely
+          echo "Processing shared libraries..."
+          if ls artifacts/macos-${{ matrix.arch }}/lib/*.dylib 1> /dev/null 2>&1; then
+            for lib in artifacts/macos-${{ matrix.arch }}/lib/*.dylib; do
+              if [ -f "$lib" ]; then
+                strip -S -x "$lib" 2>/dev/null || true
+                "$UPX_BINARY" --best --lzma --brute "$lib" 2>/dev/null || true
+              else
+                echo "Skipping non-existent file: $lib"
+              fi
+            done
+          else
+            echo "No .dylib files found to process"
+          fi
           
           # Final size verification
           echo "Library file sizes:"
-          for f in artifacts/macos-${{ matrix.arch }}/lib/*; do
-            if [ -f "$f" ]; then
-              sizeMB=$(du -m "$f" | cut -f1)
-              echo "$(basename "$f"): ${sizeMB} MB"
-            fi
-          done
+          if ls artifacts/macos-${{ matrix.arch }}/lib/* 1> /dev/null 2>&1; then
+            for f in artifacts/macos-${{ matrix.arch }}/lib/*; do
+              if [ -f "$f" ]; then
+                sizeMB=$(du -m "$f" | cut -f1)
+                echo "$(basename "$f"): ${sizeMB} MB"
+              fi
+            done
+          else
+            echo "No files found in artifacts directory"
+          fi
           
       - name: Test macOS Library Functionality
         run: |
@@ -569,8 +765,36 @@ jobs:
       - name: Collect and Compress Android Libraries
         run: |
           mkdir -p artifacts/android-${{ matrix.abi }}/lib
-          find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \;
-          find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \; 2>/dev/null || true
+          
+          # Debug: Show build directory contents
+          echo "Build directory contents:"
+          ls -la luau-build/build-android-${{ matrix.abi }}/ 2>/dev/null || echo "Build directory not found"
+          
+          # Copy static libraries with verification
+          echo "Copying static libraries..."
+          find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec sh -c '
+            for file do
+              echo "Found static library: $file"
+              target="artifacts/android-'"${{ matrix.abi }}"'/lib/$(basename "$file")"
+              cp "$file" "$target"
+              echo "Copied to: $target"
+            done
+          ' sh {} +
+          
+          # Copy shared libraries with verification
+          echo "Copying shared libraries..."
+          find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec sh -c '
+            for file do
+              echo "Found shared library: $file"
+              target="artifacts/android-'"${{ matrix.abi }}"'/lib/$(basename "$file")"
+              cp "$file" "$target"
+              echo "Copied to: $target"
+            done
+          ' sh {} +
+          
+          # Verify copied files
+          echo "Files in artifacts directory:"
+          ls -la artifacts/android-${{ matrix.abi }}/lib/ 2>/dev/null || echo "No files found in artifacts directory"
           
           case "${{ matrix.abi }}" in
             armv7) TRIPLE=armv7a-linux-androideabi;;
@@ -602,6 +826,14 @@ jobs:
             local temp_dir=$(mktemp -d)
             
             echo "Processing static library: $lib_name"
+            echo "Full path: $lib"
+            
+            # Check if file actually exists
+            if [ ! -f "$lib" ]; then
+              echo "ERROR: File does not exist: $lib"
+              rm -rf "$temp_dir"
+              return 1
+            fi
             
             if ! verify_android_library "$lib"; then
               echo "Skipping compression for $lib_name due to integrity issues"
@@ -637,7 +869,12 @@ jobs:
             
             # Recreate the library to preserve ar format
             rm -f "$lib"
-            ar rcs "$lib" *.o
+            if ! ar rcs "$lib" *.o; then
+              echo "ERROR: Failed to recreate $lib_name"
+              cd - > /dev/null
+              rm -rf "$temp_dir"
+              return 1
+            fi
             
             cd - > /dev/null
             rm -rf "$temp_dir"
@@ -653,27 +890,45 @@ jobs:
           }
           
           # Process all static libraries safely
-          for lib in artifacts/android-${{ matrix.abi }}/lib/*.a; do
-            if [ -f "$lib" ]; then
-              compress_android_library "$lib"
-            fi
-          done
+          echo "Processing static libraries..."
+          if ls artifacts/android-${{ matrix.abi }}/lib/*.a 1> /dev/null 2>&1; then
+            for lib in artifacts/android-${{ matrix.abi }}/lib/*.a; do
+              if [ -f "$lib" ]; then
+                compress_android_library "$lib"
+              else
+                echo "Skipping non-existent file: $lib"
+              fi
+            done
+          else
+            echo "No .a files found to process"
+          fi
           
-          # Process shared libraries (safer compression for .so files)
-          for lib in artifacts/android-${{ matrix.abi }}/lib/*.so; do
-            if [ -f "$lib" ]; then
-              ${STRIP_CMD} --strip-unneeded "$lib" 2>/dev/null || true
-            fi
-          done
+          # Process shared libraries safely
+          echo "Processing shared libraries..."
+          if ls artifacts/android-${{ matrix.abi }}/lib/*.so 1> /dev/null 2>&1; then
+            for lib in artifacts/android-${{ matrix.abi }}/lib/*.so; do
+              if [ -f "$lib" ]; then
+                ${STRIP_CMD} --strip-unneeded "$lib" 2>/dev/null || true
+              else
+                echo "Skipping non-existent file: $lib"
+              fi
+            done
+          else
+            echo "No .so files found to process"
+          fi
           
           # Final verification
           echo "Android library file sizes:"
-          for f in artifacts/android-${{ matrix.abi }}/lib/*; do
-            if [ -f "$f" ]; then
-              sizeMB=$(du -m "$f" | cut -f1)
-              echo "$(basename "$f"): ${sizeMB} MB"
-            fi
-          done
+          if ls artifacts/android-${{ matrix.abi }}/lib/* 1> /dev/null 2>&1; then
+            for f in artifacts/android-${{ matrix.abi }}/lib/*; do
+              if [ -f "$f" ]; then
+                sizeMB=$(du -m "$f" | cut -f1)
+                echo "$(basename "$f"): ${sizeMB} MB"
+              fi
+            done
+          else
+            echo "No files found in artifacts directory"
+          fi
           
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4
@@ -740,7 +995,39 @@ jobs:
       - name: Collect and Compress iOS Libraries
         run: |
           mkdir -p artifacts/ios-${{ matrix.sdk }}/lib
-          cp luau-build/build-ios-${{ matrix.sdk }}/Release/*.a artifacts/ios-${{ matrix.sdk }}/lib/ 2>/dev/null || true
+          
+          # Debug: Show build directory contents
+          echo "Build directory contents:"
+          ls -la luau-build/build-ios-${{ matrix.sdk }}/ 2>/dev/null || echo "Build directory not found"
+          echo "Release subdirectory:"
+          ls -la luau-build/build-ios-${{ matrix.sdk }}/Release/ 2>/dev/null || echo "Release directory not found"
+          
+          # Copy static libraries with verification
+          echo "Copying static libraries..."
+          if [ -d "luau-build/build-ios-${{ matrix.sdk }}/Release" ]; then
+            find luau-build/build-ios-${{ matrix.sdk }}/Release -name "*.a" -exec sh -c '
+              for file do
+                echo "Found static library: $file"
+                target="artifacts/ios-'"${{ matrix.sdk }}"'/lib/$(basename "$file")"
+                cp "$file" "$target"
+                echo "Copied to: $target"
+              done
+            ' sh {} +
+          else
+            echo "Release directory not found, trying to find .a files anywhere"
+            find luau-build/build-ios-${{ matrix.sdk }} -name "*.a" -exec sh -c '
+              for file do
+                echo "Found static library: $file"
+                target="artifacts/ios-'"${{ matrix.sdk }}"'/lib/$(basename "$file")"
+                cp "$file" "$target"
+                echo "Copied to: $target"
+              done
+            ' sh {} +
+          fi
+          
+          # Verify copied files
+          echo "Files in artifacts directory:"
+          ls -la artifacts/ios-${{ matrix.sdk }}/lib/ 2>/dev/null || echo "No files found in artifacts directory"
           
           UPX_BINARY=$(which upx)
           if [ -z "$UPX_BINARY" ]; then
@@ -765,6 +1052,14 @@ jobs:
             local lib_name=$(basename "$lib")
             
             echo "Processing static library: $lib_name"
+            echo "Full path: $lib"
+            
+            # Check if file actually exists
+            if [ ! -f "$lib" ]; then
+              echo "ERROR: File does not exist: $lib"
+              rm -rf "$temp_dir"
+              return 1
+            fi
             
             if ! verify_ios_library "$lib"; then
               echo "Skipping compression for $lib_name due to integrity issues"
@@ -773,7 +1068,12 @@ jobs:
             fi
             
             cd "$temp_dir"
-            ar x "$lib"
+            if ! ar x "$lib"; then
+              echo "ERROR: Failed to extract $lib_name"
+              cd - > /dev/null
+              rm -rf "$temp_dir"
+              return 1
+            fi
             
             local object_count=$(find . -name "*.o" | wc -l)
             if [ "$object_count" -eq 0 ]; then
@@ -793,7 +1093,12 @@ jobs:
             
             # Recreate the archive
             rm -f "$lib"
-            ar rcs "$lib" *.o
+            if ! ar rcs "$lib" *.o; then
+              echo "ERROR: Failed to recreate $lib_name"
+              cd - > /dev/null
+              rm -rf "$temp_dir"
+              return 1
+            fi
             
             cd - > /dev/null
             rm -rf "$temp_dir"
@@ -808,21 +1113,32 @@ jobs:
             return 0
           }
           
-          # Process all static libraries
-          for lib in artifacts/ios-${{ matrix.sdk }}/lib/*.a; do
-            if [ -f "$lib" ]; then
-              compress_static_lib_ios "$lib"
-            fi
-          done
+          # Process all static libraries safely
+          echo "Processing static libraries..."
+          if ls artifacts/ios-${{ matrix.sdk }}/lib/*.a 1> /dev/null 2>&1; then
+            for lib in artifacts/ios-${{ matrix.sdk }}/lib/*.a; do
+              if [ -f "$lib" ]; then
+                compress_static_lib_ios "$lib"
+              else
+                echo "Skipping non-existent file: $lib"
+              fi
+            done
+          else
+            echo "No .a files found to process"
+          fi
           
           # Final size verification
           echo "iOS library file sizes:"
-          for f in artifacts/ios-${{ matrix.sdk }}/lib/*; do
-            if [ -f "$f" ]; then
-              sizeMB=$(du -m "$f" | cut -f1)
-              echo "$(basename "$f"): ${sizeMB} MB"
-            fi
-          done
+          if ls artifacts/ios-${{ matrix.sdk }}/lib/* 1> /dev/null 2>&1; then
+            for f in artifacts/ios-${{ matrix.sdk }}/lib/*; do
+              if [ -f "$f" ]; then
+                sizeMB=$(du -m "$f" | cut -f1)
+                echo "$(basename "$f"): ${sizeMB} MB"
+              fi
+            done
+          else
+            echo "No files found in artifacts directory"
+          fi
           
       - name: Upload iOS Artifacts
         uses: actions/upload-artifact@v4
