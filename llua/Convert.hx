@@ -12,12 +12,22 @@ class Convert {
 	 * To Lua
 	 */
 	public static var enableUnsupportedTraces = true;
-	//TODO: should be cleared maybe before creating a table?
-	static var _funcs = [];
+	// Function references with cleanup support
+	static var _funcs:Array<Any> = [];
+	static var _funcRefs:Map<Int, Bool> = new Map();
 	
 	// Luau compatibility: use global table instead of registry for function references
 	private static var _luaFuncCounter:Int = 0;
 	private static var _luaFuncTableInitialized:Map<State, Bool> = new Map();
+	
+	/**
+	 * Clean up function references to prevent memory leaks
+	 */
+	public static function clearFunctionRefs():Void {
+		_funcs = [];
+		_funcRefs.clear();
+		_luaFuncCounter = 0;
+	}
 	
 	private static function ensureLuaFuncTable(l:State):Void {
 		if (_luaFuncTableInitialized.get(l) == true) return;
@@ -33,10 +43,16 @@ class Convert {
 		
 		var funcId = "func_" + (_luaFuncCounter++);
 		
+		// Normalize stack index: negative indices are relative, convert to absolute
+		var absIndex = stackIdx;
+		if (stackIdx < 0) {
+			absIndex = Lua.gettop(l) + stackIdx + 1;
+		}
+		
 		// Get __haxe_func_refs table
 		Lua.getglobal(l, "__haxe_func_refs");
-		// Push function value
-		Lua.pushvalue(l, stackIdx);
+		// Push function value using absolute index
+		Lua.pushvalue(l, absIndex);
 		// Store: __haxe_func_refs[funcId] = function
 		Lua.setfield(l, -2, funcId);
 		// Pop table
@@ -49,22 +65,28 @@ class Convert {
 		switch (Type.typeof(val)) {
 			case Type.ValueType.TNull:
 				Lua.pushnil(l);
+				return true;
 
 			case Type.ValueType.TBool:
 				Lua.pushboolean(l, val);
-				
+				return true;
+		
 			case Type.ValueType.TInt:
 				Lua.pushinteger(l, cast(val, Int));
+				return true;
 
 			case Type.ValueType.TFunction:
 				Lua.pushnumber(l, _funcs.push(val) - 1);
 				Lua.pushcclosure(l, _anon_callback, 1);
+				return true;
 
 			case Type.ValueType.TFloat:
 				Lua.pushnumber(l, val);
+				return true;
 
 			case Type.ValueType.TClass(String):
 				Lua.pushstring(l, cast(val, String));
+				return true;
 
 			case Type.ValueType.TClass(Array):
 				var arr:Array<Any> = val;
@@ -74,6 +96,7 @@ class Convert {
 					toLua(l, v, arr, false);
 					Lua.settable(l, -3);
 				}
+				return true;
 
 			case TClass(_):
 				if (val is haxe.Constraints.IMap) {
@@ -98,6 +121,7 @@ class Convert {
 					toLua(l, Reflect.getProperty(val, key), val, false);
 					Lua.settable(l, -3);
 				}
+				return true;
 
 			case TObject:
 				if (!recursive) {
@@ -112,13 +136,14 @@ class Convert {
 					toLua(l, obj.get(key), cast obj, false);
 					Lua.settable(l, -3);
 				}
+				return true;
 
 			default:
 				if(enableUnsupportedTraces) trace('Haxe value of $val of type ${Type.typeof(val)} not supported!' );
 				Lua.pushnil(l);
 				return false;
 		}
-		return true;
+		return false;
 	}
 
 	#if cpp
@@ -130,12 +155,16 @@ class Convert {
 
 		var numArgs = Lua.gettop(l);
 		var o = null;
-		var f = _funcs[cast Lua.tonumber(l, Lua.upvalueindex(1))];
+		var funcIdx = Std.int(cast Lua.tonumber(l, Lua.upvalueindex(1)));
+		if (funcIdx < 0 || funcIdx >= _funcs.length) {
+			Lua.pushstring(l, "Invalid function reference");
+			return 1;
+		}
+		var f = _funcs[funcIdx];
 		var args = [];
 		for (i in 0...numArgs)
 			args[i] = fromLua(l, i + 1);
 		var result = Reflect.callMethod(o, f, args);
-		// Ensure valid return value for Lua
 		if (result == null) result = 0;
 		return toLua(l, result) ? 1 : 0;
 	}
@@ -188,8 +217,8 @@ class Convert {
 		final luaType = Lua.type(l, v);
 		final typeName = Lua.typename(l, luaType);
 		return switch(typeName) {
-			case t if (t == "nil"):
-				0; // Return 0 instead of null to prevent "compare number < nil" errors
+		case t if (t == "nil"):
+			null;
 			case t if (t == "boolean"):
 				Lua.toboolean(l, v);
 			case t if (t == "number"):
@@ -264,6 +293,17 @@ class Convert {
 	}
 
 }*/
+	/**
+	 * Loop through a Lua table at stack index i, calling callback for each key-value pair
+	 */
+	private static inline function loopTable(l:State, i:Int, callback:Void->Void):Void {
+		Lua.pushnil(l);
+		while (Lua.next(l, i) != 0) {
+			callback();
+			Lua.pop(l, 1);
+		}
+	}
+	
 	public static function toHaxeObj(l, i:Int):Any {
 		var hasItems = false;
 		var array = true;
@@ -336,7 +376,8 @@ class Convert {
 		if(func != null) {
 			var tp = Lua.type(l, Lua.gettop(l));
 			if(tp != Lua.LUA_TFUNCTION) {
-				Lua.pop(l, 1);
+				var cleanupCount = Lua.gettop(l) - startTop;
+				if (cleanupCount > 0) Lua.pop(l, cleanupCount);
 				return null;
 			}
 		}
@@ -350,9 +391,8 @@ class Convert {
 		var endTop = Lua.gettop(l);
 		var count = endTop - startTop;
 		var returnArray = [];
-		for(i in count...0){ /* no-op to satisfy syntax */ }
 		for(i in 0...count){
-			returnArray.push(fromLua(l, -(count - i)));
+			returnArray.push(fromLua(l, startTop + i + 1));
 		}
 		Lua.pop(l, count);
 		return returnArray;
