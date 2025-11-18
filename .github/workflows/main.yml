@@ -770,27 +770,47 @@ jobs:
           echo "Build directory contents:"
           ls -la luau-build/build-android-${{ matrix.abi }}/ 2>/dev/null || echo "Build directory not found"
           
-          # Copy static libraries with verification
+          # Copy static libraries with verification and detailed logging
           echo "Copying static libraries..."
-          find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec sh -c '
-            for file do
-              echo "Found static library: $file"
-              target="artifacts/android-'"${{ matrix.abi }}"'/lib/$(basename "$file")"
-              cp "$file" "$target"
-              echo "Copied to: $target"
-            done
-          ' sh {} +
+          if find luau-build/build-android-${{ matrix.abi }} -name "*.a" 2>/dev/null | head -1 | grep -q .; then
+            find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec sh -c '
+              for file do
+                echo "Found static library: $file"
+                target="artifacts/android-'"${{ matrix.abi }}"'/lib/$(basename "$file")"
+                echo "Copying $file to $target"
+                if cp "$file" "$target"; then
+                  echo "Successfully copied to: $target"
+                  echo "File size: $(du -h "$target" | cut -f1)"
+                else
+                  echo "ERROR: Failed to copy $file"
+                fi
+              done
+            ' sh {} +
+          else
+            echo "No .a files found in build directory"
+            echo "Build directory contents:"
+            find luau-build/build-android-${{ matrix.abi }} -type f 2>/dev/null | head -10
+          fi
           
-          # Copy shared libraries with verification
+          # Copy shared libraries with verification and detailed logging
           echo "Copying shared libraries..."
-          find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec sh -c '
-            for file do
-              echo "Found shared library: $file"
-              target="artifacts/android-'"${{ matrix.abi }}"'/lib/$(basename "$file")"
-              cp "$file" "$target"
-              echo "Copied to: $target"
-            done
-          ' sh {} +
+          if find luau-build/build-android-${{ matrix.abi }} -name "*.so" 2>/dev/null | head -1 | grep -q .; then
+            find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec sh -c '
+              for file do
+                echo "Found shared library: $file"
+                target="artifacts/android-'"${{ matrix.abi }}"'/lib/$(basename "$file")"
+                echo "Copying $file to $target"
+                if cp "$file" "$target"; then
+                  echo "Successfully copied to: $target"
+                  echo "File size: $(du -h "$target" | cut -f1)"
+                else
+                  echo "ERROR: Failed to copy $file"
+                fi
+              done
+            ' sh {} +
+          else
+            echo "No .so files found in build directory"
+          fi
           
           # Verify copied files
           echo "Files in artifacts directory:"
@@ -819,7 +839,7 @@ jobs:
             return 0
           }
           
-          # Safe compression for Android - preserve library format
+          # Enhanced safe compression for Android - preserve library format
           compress_android_library() {
             local lib="$1"
             local lib_name=$(basename "$lib")
@@ -828,12 +848,17 @@ jobs:
             echo "Processing static library: $lib_name"
             echo "Full path: $lib"
             
-            # Check if file actually exists
+            # Check if file actually exists with enhanced verification
             if [ ! -f "$lib" ]; then
               echo "ERROR: File does not exist: $lib"
+              echo "Current directory: $(pwd)"
+              echo "Files in $(dirname "$lib"):"
+              ls -la "$(dirname "$lib)" 2>/dev/null || echo "Directory does not exist"
               rm -rf "$temp_dir"
               return 1
             fi
+            
+            echo "File exists and size: $(du -h "$lib" | cut -f1)"
             
             if ! verify_android_library "$lib"; then
               echo "Skipping compression for $lib_name due to integrity issues"
@@ -843,34 +868,48 @@ jobs:
             
             cd "$temp_dir"
             
-            # Extract object files safely
+            # Extract object files safely with better error handling
+            echo "Extracting objects from $lib_name..."
             if ! ar x "$lib"; then
               echo "ERROR: Failed to extract $lib_name"
+              echo "Working directory: $(pwd)"
+              echo "Attempted to extract: $lib"
+              echo "File details:"
+              ls -la "$lib" 2>/dev/null || echo "Cannot access file"
               cd - > /dev/null
               rm -rf "$temp_dir"
               return 1
             fi
             
             local object_count=$(find . -name "*.o" 2>/dev/null | wc -l)
+            echo "Found $object_count object files"
+            
             if [ "$object_count" -eq 0 ]; then
               echo "WARNING: No object files found in $lib_name"
+              echo "Contents of archive:"
+              ar t "$lib" 2>/dev/null || echo "Cannot list archive contents"
               cd - > /dev/null
               rm -rf "$temp_dir"
               return 1
             fi
             
             # Strip and compress each object file
+            echo "Compressing object files..."
             for obj in *.o; do
               if [ -f "$obj" ]; then
+                echo "Processing object: $obj"
                 ${STRIP_CMD} --strip-unneeded "$obj" 2>/dev/null || true
                 ./upx-4.2.2-amd64_linux/upx --best "$obj" 2>/dev/null || true
               fi
             done
             
             # Recreate the library to preserve ar format
+            echo "Recreating library with compressed objects..."
             rm -f "$lib"
             if ! ar rcs "$lib" *.o; then
               echo "ERROR: Failed to recreate $lib_name"
+              echo "Objects available for recreation:"
+              ls -la *.o 2>/dev/null || echo "No object files found"
               cd - > /dev/null
               rm -rf "$temp_dir"
               return 1
@@ -889,18 +928,24 @@ jobs:
             return 0
           }
           
-          # Process all static libraries safely
+          # Process all static libraries safely with enhanced verification
           echo "Processing static libraries..."
+          echo "Checking for .a files in: artifacts/android-${{ matrix.abi }}/lib/"
           if ls artifacts/android-${{ matrix.abi }}/lib/*.a 1> /dev/null 2>&1; then
+            echo "Found .a files, processing..."
             for lib in artifacts/android-${{ matrix.abi }}/lib/*.a; do
+              echo "Checking file: $lib"
               if [ -f "$lib" ]; then
+                echo "File exists, compressing..."
                 compress_android_library "$lib"
               else
-                echo "Skipping non-existent file: $lib"
+                echo "WARNING: Skipping non-existent file: $lib"
               fi
             done
           else
             echo "No .a files found to process"
+            echo "Available files in directory:"
+            ls -la artifacts/android-${{ matrix.abi }}/lib/ 2>/dev/null || echo "Directory does not exist or is empty"
           fi
           
           # Process shared libraries safely
