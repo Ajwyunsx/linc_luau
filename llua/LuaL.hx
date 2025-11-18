@@ -4,6 +4,7 @@ package llua;
 import llua.State;
 import llua.Buffer;
 import llua.Lua;
+import llua.CodeGen;
 
 @:include('linc_lua.h')
 #if !display
@@ -209,7 +210,14 @@ extern class LuaL {
     static function openlibs(l:State) : Void;
 
     @:native('linc::luau::load_source')
-    static function luau_loadsource(l:State, chunkname:String, source:String) : Int;
+    static function luau_loadsource_native(l:State, chunkname:String, source:String) : Int;
+
+    public static inline function luau_loadsource(l:State, chunkname:String, source:String, ?useCodegen:Bool = true) : Int {
+      if (!useCodegen) {
+        return luau_loadsource_native(l, chunkname, source);
+      }
+      return CodeGen.loadSource(l, chunkname, source);
+    }
 
     // Luau sandbox helpers (safeenv)
     @:native('luaL_sandbox')
