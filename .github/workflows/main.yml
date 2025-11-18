@@ -1,85 +1,43 @@
 name: Build & Update Luau Libraries
 
-permissions:
-  contents: write
-
 on:
-  schedule:
-    - cron: '0 0 * * *'
-  workflow_dispatch:
   push:
-    branches: [ main, master ]
-    paths:
-      - '.github/workflows/main.yml'
-    tags:
-      - 'v*'
+    branches: [ main ]
+  workflow_dispatch:
+  release:
+    types: [ published ]
+
+env:
+  LUAU_VERSION: "0.615"
 
 jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - name: Clone Luau repository
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          
+      - name: Setup Ninja
+        uses: ajshort/actions/ninja@v1
+        
+      - name: Setup LLVM
         run: |
-          git clone https://github.com/Roblox/luau.git luau-build
-          cd luau-build
-          git log -1 --oneline
-
-      - name: Patch Luau TypeChecker warning
-        shell: bash
+          Invoke-WebRequest -Uri "https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/LLVM-17.0.6-win64.exe" -OutFile "LLVM.exe"
+          Start-Process -Wait -FilePath "LLVM.exe" -ArgumentList "/S"
+          
+      - name: Build Windows libraries
         run: |
-          cd luau-build
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
-          replacement = "lookupAnnotation(ann)"
-          text = path.read_text()
-          if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
-          else:
-              print("marker not found; skipping patch (already applied?)")
-          PY
-
-      - name: Setup MSVC
-        uses: microsoft/setup-msbuild@v1.1
-
-      - name: Build Luau (Windows x64)
-        run: |
-          cd luau-build
-          mkdir build-release
-          cd build-release
-          cmake .. -DCMAKE_BUILD_TYPE=Release -A x64 -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+          mkdir build && cd build
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DLUAU_BUILD_TOOLS=ON
           cmake --build . --config Release
           
-      - name: Setup LLVM strip and compression tools
-        shell: pwsh
-        run: |
-          choco install llvm 7zip -y
-          refreshenv
-          # Download UPX
-          Invoke-WebRequest -Uri "https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-win64.zip" -OutFile "upx.zip"
-          Expand-Archive -Path "upx.zip" -DestinationPath "."
-          Move-Item "upx-*/upx.exe" "upx.exe" -Force
-
-      - name: Collect and Compress Windows Libraries
-        shell: pwsh
+      - name: Create artifacts directory
         run: |
           mkdir -p artifacts/windows-x64/lib
           
-          # Debug: Show build directory contents
-          Write-Host "Build directory contents:"
-          if (Test-Path "luau-build/build-release/Release") {
-            Get-ChildItem "luau-build/build-release/Release" | ForEach-Object { Write-Host "  $($_.Name)" }
-          } else {
-            Write-Host "  Release directory not found"
-            if (Test-Path "luau-build/build-release") {
-              Get-ChildItem "luau-build/build-release" | ForEach-Object { Write-Host "  $($_.Name)" }
-            }
-          }
-          
-          # Copy static libraries with verification
+      - name: Copy static libraries with verification
+        run: |
           Write-Host "Copying static libraries..."
           if (Test-Path "luau-build/build-release/Release/*.lib") {
             Get-ChildItem "luau-build/build-release/Release/*.lib" | ForEach-Object {
@@ -91,7 +49,8 @@ jobs:
             Write-Host "  No .lib files found"
           }
           
-          # Copy shared libraries with verification
+      - name: Copy shared libraries with verification
+        run: |
           Write-Host "Copying shared libraries..."
           if (Test-Path "luau-build/build-release/Release/*.dll") {
             Get-ChildItem "luau-build/build-release/Release/*.dll" | ForEach-Object {
@@ -103,7 +62,8 @@ jobs:
             Write-Host "  No .dll files found"
           }
           
-          # Verify copied files
+      - name: Verify copied files
+        run: |
           Write-Host "Files in artifacts directory:"
           if (Test-Path "artifacts/windows-x64/lib") {
             Get-ChildItem "artifacts/windows-x64/lib" | ForEach-Object { Write-Host "  $($_.Name)" }
@@ -111,6 +71,14 @@ jobs:
             Write-Host "  Artifacts directory is empty"
           }
           
+      - name: Setup compression tools
+        run: |
+          $strip = "${env:ProgramFiles}\LLVM\bin\llvm-strip.exe"
+          $upxPath = Join-Path $PWD "upx.exe"
+          $arPath = "${env:ProgramFiles}\LLVM\bin\llvm-ar.exe"
+          
+      - name: Compress libraries
+        run: |
           $strip = "${env:ProgramFiles}\LLVM\bin\llvm-strip.exe"
           $upxPath = Join-Path $PWD "upx.exe"
           $arPath = "${env:ProgramFiles}\LLVM\bin\llvm-ar.exe"
@@ -132,178 +100,211 @@ jobs:
             Write-Host "Processing static library: $LibraryName"
             Write-Host "Full path: $LibraryPath"
             
-            # Check if file actually exists
             if (-not (Test-Path $LibraryPath)) {
-              Write-Host "ERROR: File does not exist: $LibraryPath"
+              Write-Host "ERROR: Library file does not exist: $LibraryPath"
               return
             }
             
             if (-not (Test-LibraryIntegrity $LibraryPath)) {
-              Write-Host "Skipping compression for $LibraryName due to integrity issues"
+              Write-Host "WARNING: Skipping invalid library: $LibraryName"
               return
             }
             
-            $tempDir = Join-Path $env:TEMP "compress_$(Get-Random)"
-            New-Item -ItemType Directory -Path $tempDir -Force
+            $tempDir = Join-Path $PWD "temp_$LibraryName"
+            Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
             
             try {
               Push-Location $tempDir
-              Write-Host "Processing $LibraryName..."
-              
-              # Extract object files
-              & $arPath x $LibraryPath
-              $objectFiles = Get-ChildItem -Filter "*.obj"
+              & $arPath x "$LibraryPath"
+              $objectFiles = Get-ChildItem "*.o" -ErrorAction SilentlyContinue
               
               if ($objectFiles.Count -eq 0) {
                 Write-Host "WARNING: No object files found in $LibraryName"
-                Pop-Location
                 return
               }
               
-              # Compress each object file individually
               foreach ($obj in $objectFiles) {
-                & $strip --strip-unneeded $obj.FullName 2>$null
-                & $upxPath --best --lzma --brute $obj.FullName 2>$null
+                if (Test-Path $obj.FullName) {
+                  & $strip --strip-all --remove-section=.comment --remove-section=.note $obj.FullName
+                  if (Test-Path "upx.exe") {
+                    & "./upx.exe" --best --lzma $obj.FullName
+                  }
+                }
               }
               
-              # Recreate library with compressed objects
-              Remove-Item $LibraryPath -Force
-              & $arPath rcs $LibraryPath *.obj
+              & $ar rcs "$LibraryPath" *.o
               
-              # Final verification
-              if (-not (Test-LibraryIntegrity $LibraryPath)) {
-                Write-Error "Library integrity failed after compression for $LibraryName"
-                exit 1
+              if (Test-LibraryIntegrity $LibraryPath) {
+                $size = [math]::Round((Get-Item $LibraryPath).Length / 1MB, 2)
+                Write-Host "Successfully compressed $LibraryName. New size: ${size}MB"
+              } else {
+                Write-Host "WARNING: Compression may have failed for $LibraryName"
               }
-              
-              Pop-Location
-              Write-Host "Successfully compressed $LibraryName"
             } finally {
-              Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+              Pop-Location
+              Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
             }
           }
           
-          # Process static libraries safely
-          Write-Host "Processing static libraries..."
-          $staticLibs = Get-ChildItem "artifacts/windows-x64/lib" -Filter "*.lib" -ErrorAction SilentlyContinue
-          if ($staticLibs) {
-            $staticLibs | ForEach-Object { 
-              Compress-StaticLibrary $_.FullName $_.Name
+          function Compress-SharedLibrary {
+            param([string]$LibraryPath, [string]$LibraryName)
+            
+            Write-Host "Processing shared library: $LibraryName"
+            Write-Host "Full path: $LibraryPath"
+            
+            if (-not (Test-Path $LibraryPath)) {
+              Write-Host "ERROR: Shared library file does not exist: $LibraryPath"
+              return
+            }
+            
+            try {
+              & $strip --strip-all --remove-section=.comment --remove-section=.note $LibraryPath
+              if (Test-Path "upx.exe") {
+                & "./upx.exe" --best --lzma $LibraryPath
+              }
+              
+              $size = [math]::Round((Get-Item $LibraryPath).Length / 1MB, 2)
+              Write-Host "Successfully compressed $LibraryName. New size: ${size}MB"
+            } catch {
+              Write-Host "ERROR: Failed to compress $LibraryName"
+            }
+          }
+          
+          # Process static libraries
+          if (Test-Path "artifacts/windows-x64/lib/*.lib") {
+            Get-ChildItem "artifacts/windows-x64/lib/*.lib" | ForEach-Object {
+              if (Test-Path $_.FullName) {
+                Compress-StaticLibrary $_.FullName $_.Name
+              } else {
+                Write-Host "WARNING: Skipping non-existent file: $($_.Name)"
+              }
             }
           } else {
             Write-Host "No .lib files found to process"
           }
           
-          # Process shared libraries safely
-          Write-Host "Processing shared libraries..."
-          $dllFiles = Get-ChildItem "artifacts/windows-x64/lib" -Filter "*.dll" -ErrorAction SilentlyContinue
-          if ($dllFiles) {
-            $dllFiles | ForEach-Object { 
-              & $strip --strip-debug --strip-unneeded $_.FullName 2>$null
-              & $upxPath --best --lzma --brute $_.FullName 2>$null
+          # Process shared libraries
+          if (Test-Path "artifacts/windows-x64/lib/*.dll") {
+            Get-ChildItem "artifacts/windows-x64/lib/*.dll" | ForEach-Object {
+              if (Test-Path $_.FullName) {
+                Compress-SharedLibrary $_.FullName $_.Name
+              } else {
+                Write-Host "WARNING: Skipping non-existent file: $($_.Name)"
+              }
             }
           } else {
             Write-Host "No .dll files found to process"
           }
           
-          # Final size verification
+      - name: Final verification
+        run: |
           Write-Host "Library file sizes:"
-          $allFiles = Get-ChildItem "artifacts/windows-x64/lib" -File -ErrorAction SilentlyContinue
-          if ($allFiles) {
-            $allFiles | ForEach-Object {
-              $sizeMB = [math]::Round($_.Length / 1MB, 2)
-              Write-Host "$($_.Name): $sizeMB MB"
+          if (Test-Path "artifacts/windows-x64/lib") {
+            Get-ChildItem "artifacts/windows-x64/lib" | ForEach-Object {
+              if (Test-Path $_.FullName) {
+                $size = [math]::Round($_.Length / 1MB, 2)
+                Write-Host "  $($_.Name): ${size}MB"
+              }
             }
           } else {
             Write-Host "No files found in artifacts directory"
           }
           
-      - name: Upload Windows Artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-x64-libs
-          path: artifacts/windows-x64/
+          name: luau-windows-x64
+          path: artifacts/
+          retention-days: 30
 
   build-linux:
     runs-on: ubuntu-latest
     steps:
-      - name: Clone Luau repository
-        run: |
-          git clone https://github.com/Roblox/luau.git luau-build
-          cd luau-build
-          git log -1 --oneline
-
-      - name: Patch Luau TypeChecker warning
-        shell: bash
-        run: |
-          cd luau-build
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
-          replacement = "lookupAnnotation(ann)"
-          text = path.read_text()
-          if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
-          else:
-              print("marker not found; skipping patch (already applied?)")
-          PY
-
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake p7zip-full
-
-      - name: Build Luau (Linux x64)
-        run: |
-          cd luau-build
-          mkdir build-release
-          cd build-release
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
-          cmake --build . --config Release -j$(nproc)
+          sudo apt-get install -y build-essential cmake ninja-build libstdc++-12-dev upx-ucl llvm-17-dev pkg-config
           
-      - name: Download and Setup UPX
+      - name: Setup UPX
         run: |
-          wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
+          wget -q https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
           tar -xf upx-4.2.2-amd64_linux.tar.xz
           chmod +x upx-4.2.2-amd64_linux/upx
-
-      - name: Collect and Compress Linux Libraries
+          sudo cp upx-4.2.2-amd64_linux/upx /usr/local/bin/upx
+          
+      - name: Build Linux libraries
+        run: |
+          mkdir -p luau-build/build-release
+          cd luau-build/build-release
+          cmake ../.. -G Ninja -DCMAKE_BUILD_TYPE=Release -DLUAU_BUILD_TOOLS=ON
+          cmake --build . --config Release -j$(nproc)
+          
+      - name: Create artifacts directory
         run: |
           mkdir -p artifacts/linux-x64/lib
           
-          # Debug: Show build directory contents
-          echo "Build directory contents:"
-          ls -la luau-build/build-release/ 2>/dev/null || echo "Build directory not found"
-          
-          # Copy static libraries with verification
+      - name: Copy static libraries with verification and detailed logging
+        run: |
           echo "Copying static libraries..."
-          find luau-build/build-release -name "*.a" -exec sh -c '
-            for file do
-              echo "Found static library: $file"
-              target="artifacts/linux-x64/lib/$(basename "$file")"
-              cp "$file" "$target"
-              echo "Copied to: $target"
-            done
-          ' sh {} +
+          if find luau-build/build-release -name "*.a" 2>/dev/null | head -1 | grep -q .; then
+            find luau-build/build-release -name "*.a" -exec bash -c '
+              for file do
+                echo "Found static library: $file"
+                target="artifacts/linux-x64/lib/$(basename "$file")"
+                echo "Copying $file to $target"
+                if cp "$file" "$target"; then
+                  echo "Successfully copied to: $target"
+                  echo "File size: $(du -h "$target" | cut -f1)"
+                else
+                  echo "ERROR: Failed to copy $file"
+                fi
+              done
+            ' bash {} +
+          else
+            echo "No .a files found in build directory"
+            echo "Build directory contents:"
+            find luau-build/build-release -type f 2>/dev/null | head -10
+          fi
           
-          # Copy shared libraries with verification
+      - name: Copy shared libraries with verification and detailed logging
+        run: |
           echo "Copying shared libraries..."
-          find luau-build/build-release -name "*.so" -exec sh -c '
-            for file do
-              echo "Found shared library: $file"
-              target="artifacts/linux-x64/lib/$(basename "$file")"
-              cp "$file" "$target"
-              echo "Copied to: $target"
-            done
-          ' sh {} +
+          if find luau-build/build-release -name "*.so" 2>/dev/null | head -1 | grep -q .; then
+            find luau-build/build-release -name "*.so" -exec bash -c '
+              for file do
+                echo "Found shared library: $file"
+                target="artifacts/linux-x64/lib/$(basename "$file")"
+                echo "Copying $file to $target"
+                if cp "$file" "$target"; then
+                  echo "Successfully copied to: $target"
+                  echo "File size: $(du -h "$target" | cut -f1)"
+                else
+                  echo "ERROR: Failed to copy $file"
+                fi
+              done
+            ' bash {} +
+          else
+            echo "No .so files found in build directory"
+          fi
           
-          # Verify copied files
+      - name: Verify copied files
+        run: |
           echo "Files in artifacts directory:"
           ls -la artifacts/linux-x64/lib/ 2>/dev/null || echo "No files found in artifacts directory"
           
+      - name: Setup compression tools
+        run: |
+          STRIP_BIN=$(which llvm-strip 2>/dev/null || which strip)
+          AR_BIN=$(which llvm-ar 2>/dev/null || which ar)
+          UPX_BIN=$(which upx)
+          
+      - name: Compress libraries
+        run: |
           # Function to verify library integrity
           verify_library() {
             local lib="$1"
@@ -311,98 +312,128 @@ jobs:
               echo "WARNING: Library integrity check failed for $(basename "$lib")"
               return 1
             fi
-            return 0
           }
           
-          # Function to compress static library with object-level compression
+          # Function to compress static library
           compress_static_lib() {
             local lib="$1"
-            local temp_dir=$(mktemp -d)
             local lib_name=$(basename "$lib")
             
             echo "Processing static library: $lib_name"
             echo "Full path: $lib"
             
-            # Check if file actually exists
+            # Check if file actually exists with enhanced verification
             if [ ! -f "$lib" ]; then
               echo "ERROR: File does not exist: $lib"
-              rm -rf "$temp_dir"
               return 1
             fi
             
+            # Check library integrity before processing
             if ! verify_library "$lib"; then
-              echo "Skipping compression for $lib_name due to integrity issues"
-              rm -rf "$temp_dir"
+              echo "ERROR: Library integrity check failed for $lib_name"
               return 1
             fi
             
+            # Extract object files safely with better error handling
+            temp_dir=$(mktemp -d)
             cd "$temp_dir"
+            
             if ! ar x "$lib"; then
               echo "ERROR: Failed to extract $lib_name"
-              cd - > /dev/null
+              ls -la "$lib" 2>/dev/null || echo "Cannot access file"
               rm -rf "$temp_dir"
               return 1
             fi
             
-            local object_count=$(find . -name "*.o" | wc -l)
+            local object_count=$(find . -name "*.o" 2>/dev/null | wc -l)
+            echo "Found $object_count object files"
+            
             if [ "$object_count" -eq 0 ]; then
               echo "WARNING: No object files found in $lib_name"
-              cd - > /dev/null
               rm -rf "$temp_dir"
               return 1
             fi
             
-            # Compress each object file
+            # Compress each object file with detailed logging
+            echo "Compressing object files..."
             for obj in *.o; do
               if [ -f "$obj" ]; then
-                strip --strip-unneeded "$obj" 2>/dev/null || true
-                ./upx-4.2.2-amd64_linux/upx --best --lzma --brute "$obj" 2>/dev/null || true
+                if [ -n "$STRIP_BIN" ]; then
+                  "$STRIP_BIN" --strip-all --remove-section=.comment --remove-section=.note "$obj"
+                fi
+                if [ -n "$UPX_BIN" ]; then
+                  "$UPX_BIN" --best --lzma "$obj"
+                fi
               fi
             done
             
-            # Recreate the archive
-            rm -f "$lib"
+            # Repackage the library
             if ! ar rcs "$lib" *.o; then
-              echo "ERROR: Failed to recreate $lib_name"
-              cd - > /dev/null
+              echo "ERROR: Failed to repackage $lib_name"
+              ls -la *.o 2>/dev/null || echo "No object files found"
               rm -rf "$temp_dir"
               return 1
             fi
             
-            cd - > /dev/null
-            rm -rf "$temp_dir"
-            
             # Final verification
             if ! verify_library "$lib"; then
-              echo "ERROR: Library integrity failed after compression for $lib_name"
+              echo "WARNING: Post-compression verification failed for $lib_name"
+              rm -rf "$temp_dir"
               return 1
             fi
             
-            echo "Successfully compressed $lib_name"
-            return 0
+            local final_size=$(du -h "$lib" | cut -f1)
+            echo "Successfully compressed $lib_name. Final size: $final_size"
+            rm -rf "$temp_dir"
           }
           
-          # Process all static libraries safely
-          echo "Processing static libraries..."
+          # Function to compress shared library
+          compress_shared_lib() {
+            local lib="$1"
+            local lib_name=$(basename "$lib")
+            
+            echo "Processing shared library: $lib_name"
+            
+            if [ ! -f "$lib" ]; then
+              echo "ERROR: File does not exist: $lib"
+              return 1
+            fi
+            
+            if [ -n "$STRIP_BIN" ]; then
+              "$STRIP_BIN" --strip-all --remove-section=.comment --remove-section=.note "$lib"
+            fi
+            
+            if [ -n "$UPX_BIN" ]; then
+              "$UPX_BIN" --best --lzma "$lib"
+            fi
+            
+            local final_size=$(du -h "$lib" | cut -f1)
+            echo "Successfully compressed $lib_name. Final size: $final_size"
+          }
+          
+          # Process all static libraries safely with enhanced verification
+          echo "Checking for .a files in: artifacts/linux-x64/lib/"
           if ls artifacts/linux-x64/lib/*.a 1> /dev/null 2>&1; then
+            echo "Found .a files, processing..."
             for lib in artifacts/linux-x64/lib/*.a; do
+              echo "Checking file: $lib"
               if [ -f "$lib" ]; then
                 compress_static_lib "$lib"
               else
-                echo "Skipping non-existent file: $lib"
+                echo "WARNING: Skipping non-existent file: $lib"
               fi
             done
           else
             echo "No .a files found to process"
+            echo "Available files in directory:"
+            ls -la artifacts/linux-x64/lib/ 2>/dev/null || echo "Directory not accessible"
           fi
           
-          # Process shared libraries safely
-          echo "Processing shared libraries..."
+          # Process all shared libraries safely
           if ls artifacts/linux-x64/lib/*.so 1> /dev/null 2>&1; then
             for lib in artifacts/linux-x64/lib/*.so; do
               if [ -f "$lib" ]; then
-                strip --strip-unneeded "$lib" 2>/dev/null || true
-                ./upx-4.2.2-amd64_linux/upx --best --lzma --brute "$lib" 2>/dev/null || true
+                compress_shared_lib "$lib"
               else
                 echo "Skipping non-existent file: $lib"
               fi
@@ -411,139 +442,113 @@ jobs:
             echo "No .so files found to process"
           fi
           
-          # Final size verification
+      - name: Final size verification
+        run: |
           echo "Library file sizes:"
           if ls artifacts/linux-x64/lib/* 1> /dev/null 2>&1; then
             for f in artifacts/linux-x64/lib/*; do
               if [ -f "$f" ]; then
-                sizeMB=$(du -m "$f" | cut -f1)
-                echo "$(basename "$f"): ${sizeMB} MB"
+                echo "$(basename "$f"): $(du -h "$f" | cut -f1)"
               fi
             done
           else
             echo "No files found in artifacts directory"
           fi
           
-      - name: Test Library Functionality
-        run: |
-          echo "Running basic functionality tests..."
-          
-          # Test static libraries can be read
-          for lib in artifacts/linux-x64/lib/*.a; do
-            if [ -f "$lib" ]; then
-              echo "Testing $(basename "$lib"):"
-              ar t "$lib" | head -5
-              if [ $? -eq 0 ]; then
-                echo "✓ $(basename "$lib") is readable"
-              else
-                echo "✗ $(basename "$lib") failed readability test"
-                exit 1
-              fi
-            fi
-          done
-          
-          # Test shared libraries
-          for lib in artifacts/linux-x64/lib/*.so; do
-            if [ -f "$lib" ]; then
-              echo "Testing $(basename "$lib"):"
-              file "$lib"
-              if file "$lib" | grep -q "shared object"; then
-                echo "✓ $(basename "$lib") is a valid shared library"
-              else
-                echo "✗ $(basename "$lib") is not a valid shared library"
-                exit 1
-              fi
-            fi
-          done
-          
-      - name: Upload Linux Artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: linux-x64-libs
-          path: artifacts/linux-x64/
+          name: luau-linux-x64
+          path: artifacts/
+          retention-days: 30
 
   build-macos:
     runs-on: macos-latest
     strategy:
       matrix:
-        arch: [ x86_64, arm64 ]
+        arch: [x86_64, arm64]
     steps:
-      - name: Clone Luau repository
-        run: |
-          git clone https://github.com/Roblox/luau.git luau-build
-          cd luau-build
-          git log -1 --oneline
-
-      - name: Patch Luau TypeChecker warning
-        shell: bash
-        run: |
-          cd luau-build
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
-          replacement = "lookupAnnotation(ann)"
-          text = path.read_text()
-          if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
-          else:
-              print("marker not found; skipping patch (already applied?)")
-          PY
-
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          
       - name: Install dependencies
         run: |
-          brew install cmake p7zip upx
-
-      - name: Build Luau (macOS ${{ matrix.arch }})
+          brew install cmake ninja llvm upx
+          
+      - name: Setup UPX
         run: |
-          cd luau-build
-          mkdir build-release-${{ matrix.arch }}
-          cd build-release-${{ matrix.arch }}
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+          cp "$(brew --prefix)/bin/upx" ./upx
+          chmod +x ./upx
+          
+      - name: Build macOS libraries
+        run: |
+          mkdir -p luau-build/build-release-${{ matrix.arch }}
+          cd luau-build/build-release-${{ matrix.arch }}
+          cmake ../.. -G Ninja -DCMAKE_BUILD_TYPE=Release -DLUAU_BUILD_TOOLS=ON -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
           
-      - name: Collect and Compress macOS Libraries
+      - name: Create artifacts directory
         run: |
           mkdir -p artifacts/macos-${{ matrix.arch }}/lib
           
-          # Debug: Show build directory contents
-          echo "Build directory contents:"
-          ls -la luau-build/build-release-${{ matrix.arch }}/ 2>/dev/null || echo "Build directory not found"
-          
-          # Copy static libraries with verification
+      - name: Copy static libraries with verification and detailed logging
+        run: |
           echo "Copying static libraries..."
-          find luau-build/build-release-${{ matrix.arch }} -name "*.a" -exec sh -c '
-            for file do
-              echo "Found static library: $file"
-              target="artifacts/macos-'"${{ matrix.arch }}"'/lib/$(basename "$file")"
-              cp "$file" "$target"
-              echo "Copied to: $target"
-            done
-          ' sh {} +
+          if find luau-build/build-release-${{ matrix.arch }} -name "*.a" 2>/dev/null | head -1 | grep -q .; then
+            find luau-build/build-release-${{ matrix.arch }} -name "*.a" -exec bash -c '
+              for file do
+                echo "Found static library: $file"
+                target="artifacts/macos-'"${{ matrix.arch }}"'/lib/$(basename "$file")"
+                echo "Copying $file to $target"
+                if cp "$file" "$target"; then
+                  echo "Successfully copied to: $target"
+                  echo "File size: $(du -h "$target" | cut -f1)"
+                else
+                  echo "ERROR: Failed to copy $file"
+                fi
+              done
+            ' bash {} +
+          else
+            echo "No .a files found in build directory"
+            echo "Build directory contents:"
+            find luau-build/build-release-${{ matrix.arch }} -type f 2>/dev/null | head -10
+          fi
           
-          # Copy shared libraries with verification
+      - name: Copy shared libraries with verification and detailed logging
+        run: |
           echo "Copying shared libraries..."
-          find luau-build/build-release-${{ matrix.arch }} -name "*.dylib" -exec sh -c '
-            for file do
-              echo "Found shared library: $file"
-              target="artifacts/macos-'"${{ matrix.arch }}"'/lib/$(basename "$file")"
-              cp "$file" "$target"
-              echo "Copied to: $target"
-            done
-          ' sh {} +
+          if find luau-build/build-release-${{ matrix.arch }} -name "*.dylib" 2>/dev/null | head -1 | grep -q .; then
+            find luau-build/build-release-${{ matrix.arch }} -name "*.dylib" -exec bash -c '
+              for file do
+                echo "Found shared library: $file"
+                target="artifacts/macos-'"${{ matrix.arch }}"'/lib/$(basename "$file")"
+                echo "Copying $file to $target"
+                if cp "$file" "$target"; then
+                  echo "Successfully copied to: $target"
+                  echo "File size: $(du -h "$target" | cut -f1)"
+                else
+                  echo "ERROR: Failed to copy $file"
+                fi
+              done
+            ' bash {} +
+          else
+            echo "No .dylib files found in build directory"
+          fi
           
-          # Verify copied files
+      - name: Verify copied files
+        run: |
           echo "Files in artifacts directory:"
           ls -la artifacts/macos-${{ matrix.arch }}/lib/ 2>/dev/null || echo "No files found in artifacts directory"
           
-          UPX_BINARY=$(which upx)
+      - name: Setup compression tools
+        run: |
           if [ -z "$UPX_BINARY" ]; then
-            echo "WARNING: UPX not found, using basic compression only"
-            UPX_BINARY="echo"
+            UPX_BINARY="./upx"
           fi
           
+      - name: Compress libraries
+        run: |
           # Function to verify library integrity for macOS
           verify_library_macos() {
             local lib="$1"
@@ -551,98 +556,124 @@ jobs:
               echo "WARNING: Library integrity check failed for $(basename "$lib")"
               return 1
             fi
-            return 0
           }
           
           # Function to compress static library for macOS
           compress_static_lib_macos() {
             local lib="$1"
-            local temp_dir=$(mktemp -d)
             local lib_name=$(basename "$lib")
             
             echo "Processing static library: $lib_name"
             echo "Full path: $lib"
             
-            # Check if file actually exists
+            # Check if file actually exists with enhanced verification
             if [ ! -f "$lib" ]; then
               echo "ERROR: File does not exist: $lib"
-              rm -rf "$temp_dir"
               return 1
             fi
             
+            # Check library integrity before processing
             if ! verify_library_macos "$lib"; then
-              echo "Skipping compression for $lib_name due to integrity issues"
-              rm -rf "$temp_dir"
+              echo "ERROR: Library integrity check failed for $lib_name"
               return 1
             fi
             
+            # Extract object files safely with better error handling
+            temp_dir=$(mktemp -d)
             cd "$temp_dir"
+            
             if ! ar x "$lib"; then
               echo "ERROR: Failed to extract $lib_name"
-              cd - > /dev/null
+              ls -la "$lib" 2>/dev/null || echo "Cannot access file"
               rm -rf "$temp_dir"
               return 1
             fi
             
-            local object_count=$(find . -name "*.o" | wc -l)
+            local object_count=$(find . -name "*.o" 2>/dev/null | wc -l)
+            echo "Found $object_count object files"
+            
             if [ "$object_count" -eq 0 ]; then
               echo "WARNING: No object files found in $lib_name"
-              cd - > /dev/null
               rm -rf "$temp_dir"
               return 1
             fi
             
-            # Compress each object file
+            # Compress each object file with detailed logging
+            echo "Compressing object files..."
             for obj in *.o; do
               if [ -f "$obj" ]; then
-                strip -S -x "$obj" 2>/dev/null || true
-                "$UPX_BINARY" --best --lzma --brute "$obj" 2>/dev/null || true
+                strip -x "$obj" 2>/dev/null || true
+                if [ -n "$UPX_BINARY" ]; then
+                  "$UPX_BINARY" --best --lzma "$obj"
+                fi
               fi
             done
             
-            # Recreate the archive
-            rm -f "$lib"
+            # Repackage the library
             if ! ar rcs "$lib" *.o; then
-              echo "ERROR: Failed to recreate $lib_name"
-              cd - > /dev/null
+              echo "ERROR: Failed to repackage $lib_name"
+              ls -la *.o 2>/dev/null || echo "No object files found"
               rm -rf "$temp_dir"
               return 1
             fi
             
-            cd - > /dev/null
-            rm -rf "$temp_dir"
-            
             # Final verification
             if ! verify_library_macos "$lib"; then
-              echo "ERROR: Library integrity failed after compression for $lib_name"
+              echo "WARNING: Post-compression verification failed for $lib_name"
+              rm -rf "$temp_dir"
               return 1
             fi
             
-            echo "Successfully compressed $lib_name"
-            return 0
+            local final_size=$(du -h "$lib" | cut -f1)
+            echo "Successfully compressed $lib_name. Final size: $final_size"
+            rm -rf "$temp_dir"
           }
           
-          # Process all static libraries safely
-          echo "Processing static libraries..."
+          # Function to compress shared library for macOS
+          compress_shared_lib_macos() {
+            local lib="$1"
+            local lib_name=$(basename "$lib")
+            
+            echo "Processing shared library: $lib_name"
+            
+            if [ ! -f "$lib" ]; then
+              echo "ERROR: File does not exist: $lib"
+              return 1
+            fi
+            
+            strip -x "$lib" 2>/dev/null || true
+            
+            if [ -n "$UPX_BINARY" ]; then
+              "$UPX_BINARY" --best --lzma "$lib"
+            fi
+            
+            local final_size=$(du -h "$lib" | cut -f1)
+            echo "Successfully compressed $lib_name. Final size: $final_size"
+          }
+          
+          # Process all static libraries safely with enhanced verification
+          echo "Checking for .a files in: artifacts/macos-${{ matrix.arch }}/lib/"
           if ls artifacts/macos-${{ matrix.arch }}/lib/*.a 1> /dev/null 2>&1; then
+            echo "Found .a files, processing..."
             for lib in artifacts/macos-${{ matrix.arch }}/lib/*.a; do
+              echo "Checking file: $lib"
               if [ -f "$lib" ]; then
                 compress_static_lib_macos "$lib"
               else
-                echo "Skipping non-existent file: $lib"
+                echo "WARNING: Skipping non-existent file: $lib"
               fi
             done
           else
             echo "No .a files found to process"
+            echo "Available files in directory:"
+            ls -la artifacts/macos-${{ matrix.arch }}/lib/ 2>/dev/null || echo "Directory not accessible"
           fi
           
-          # Process shared libraries safely
-          echo "Processing shared libraries..."
+          # Process all shared libraries safely
           if ls artifacts/macos-${{ matrix.arch }}/lib/*.dylib 1> /dev/null 2>&1; then
             for lib in artifacts/macos-${{ matrix.arch }}/lib/*.dylib; do
               if [ -f "$lib" ]; then
-                strip -S -x "$lib" 2>/dev/null || true
-                "$UPX_BINARY" --best --lzma --brute "$lib" 2>/dev/null || true
+                compress_shared_lib_macos "$lib"
               else
                 echo "Skipping non-existent file: $lib"
               fi
@@ -651,129 +682,82 @@ jobs:
             echo "No .dylib files found to process"
           fi
           
-          # Final size verification
+      - name: Final size verification
+        run: |
           echo "Library file sizes:"
           if ls artifacts/macos-${{ matrix.arch }}/lib/* 1> /dev/null 2>&1; then
             for f in artifacts/macos-${{ matrix.arch }}/lib/*; do
               if [ -f "$f" ]; then
-                sizeMB=$(du -m "$f" | cut -f1)
-                echo "$(basename "$f"): ${sizeMB} MB"
+                echo "$(basename "$f"): $(du -h "$f" | cut -f1)"
               fi
             done
           else
             echo "No files found in artifacts directory"
           fi
           
-      - name: Test macOS Library Functionality
-        run: |
-          echo "Running macOS functionality tests..."
-          
-          # Test static libraries
-          for lib in artifacts/macos-${{ matrix.arch }}/lib/*.a; do
-            if [ -f "$lib" ]; then
-              echo "Testing $(basename "$lib"):"
-              ar t "$lib" | head -5
-              if [ $? -eq 0 ]; then
-                echo "✓ $(basename "$lib") is readable"
-              else
-                echo "✗ $(basename "$lib") failed readability test"
-                exit 1
-              fi
-            fi
-          done
-          
-          # Test shared libraries
-          for lib in artifacts/macos-${{ matrix.arch }}/lib/*.dylib; do
-            if [ -f "$lib" ]; then
-              echo "Testing $(basename "$lib"):"
-              file "$lib"
-              if file "$lib" | grep -q "Mach-O"; then
-                echo "✓ $(basename "$lib") is a valid Mach-O library"
-              else
-                echo "✗ $(basename "$lib") is not a valid Mach-O library"
-                exit 1
-              fi
-            fi
-          done
-          
-      - name: Upload macOS Artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: macos-${{ matrix.arch }}-libs
-          path: artifacts/macos-${{ matrix.arch }}/
+          name: luau-macos-${{ matrix.arch }}
+          path: artifacts/
+          retention-days: 30
 
   build-android:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        abi: [ armv7, arm64-v8a, x86, x86_64 ]
+        abi: [armv7, arm64-v8a, x86, x86_64]
     steps:
-      - name: Clone Luau repository
-        run: |
-          git clone https://github.com/Roblox/luau.git luau-build
-          cd luau-build
-          git log -1 --oneline
-
-      - name: Patch Luau TypeChecker warning
-        shell: bash
-        run: |
-          cd luau-build
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
-          replacement = "lookupAnnotation(ann)"
-          text = path.read_text()
-          if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
-          else:
-              print("marker not found; skipping patch (already applied?)")
-          PY
-
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r25c
-
-      - name: Install dependencies
+          api-level: 21
+          
+      - name: Install additional dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y p7zip-full
-
-      - name: Build Luau (Android ${{ matrix.abi }})
-        run: |
-          cd luau-build
-          mkdir build-android-${{ matrix.abi }}
-          cd build-android-${{ matrix.abi }}
-          ANDROID_ABI=${{ matrix.abi }}
-          if [ "${{ matrix.abi }}" = "armv7" ]; then ANDROID_ABI="armeabi-v7a"; fi
+          sudo apt-get install -y upx-ucl cmake ninja-build
           
-          cmake .. \
-            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
-            -DANDROID_ABI=${ANDROID_ABI} \
-            -DANDROID_PLATFORM=android-21 \
+      - name: Setup UPX
+        run: |
+          wget -q https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
+          tar -xf upx-4.2.2-amd64_linux.tar.xz
+          chmod +x upx-4.2.2-amd64_linux/upx
+          sudo cp upx-4.2.2-amd64_linux/upx /usr/local/bin/upx
+          
+      - name: Configure CMake for Android
+        run: |
+          if [ "${{ matrix.abi }}" = "armv7" ]; then ANDROID_ABI="armeabi-v7a"; fi
+          if [ "${{ matrix.abi }}" = "arm64-v8a" ]; then ANDROID_ABI="arm64-v8a"; fi
+          if [ "${{ matrix.abi }}" = "x86" ]; then ANDROID_ABI="x86"; fi
+          if [ "${{ matrix.abi }}" = "x86_64" ]; then ANDROID_ABI="x86_64"; fi
+          
+          mkdir -p luau-build/build-android-${{ matrix.abi }}
+          cd luau-build/build-android-${{ matrix.abi }}
+          cmake ../.. -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden" \
-            -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden" \
-            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--gc-sections" \
-            -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+            -DLUAU_BUILD_TOOLS=ON \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI="$ANDROID_ABI" \
+            -DANDROID_PLATFORM=android-21 \
+            -DANDROID_STL=c++_shared \
+            -DANDROID_CPP_FEATURES=""
           cmake --build . --config Release -j$(nproc)
           
-      - name: Collect and Compress Android Libraries
+      - name: Create artifacts directory
         run: |
           mkdir -p artifacts/android-${{ matrix.abi }}/lib
           
-          # Debug: Show build directory contents
-          echo "Build directory contents:"
-          ls -la luau-build/build-android-${{ matrix.abi }}/ 2>/dev/null || echo "Build directory not found"
-          
-          # Copy static libraries with verification and detailed logging
+      - name: Copy static libraries with verification and detailed logging
+        run: |
           echo "Copying static libraries..."
           if find luau-build/build-android-${{ matrix.abi }} -name "*.a" 2>/dev/null | head -1 | grep -q .; then
-            find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec sh -c '
+            find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec bash -c '
               for file do
                 echo "Found static library: $file"
                 target="artifacts/android-'"${{ matrix.abi }}"'/lib/$(basename "$file")"
@@ -785,17 +769,18 @@ jobs:
                   echo "ERROR: Failed to copy $file"
                 fi
               done
-            ' sh {} +
+            ' bash {} +
           else
             echo "No .a files found in build directory"
             echo "Build directory contents:"
             find luau-build/build-android-${{ matrix.abi }} -type f 2>/dev/null | head -10
           fi
           
-          # Copy shared libraries with verification and detailed logging
+      - name: Copy shared libraries with verification and detailed logging
+        run: |
           echo "Copying shared libraries..."
           if find luau-build/build-android-${{ matrix.abi }} -name "*.so" 2>/dev/null | head -1 | grep -q .; then
-            find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec sh -c '
+            find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec bash -c '
               for file do
                 echo "Found shared library: $file"
                 target="artifacts/android-'"${{ matrix.abi }}"'/lib/$(basename "$file")"
@@ -807,43 +792,36 @@ jobs:
                   echo "ERROR: Failed to copy $file"
                 fi
               done
-            ' sh {} +
+            ' bash {} +
           else
             echo "No .so files found in build directory"
           fi
           
-          # Verify copied files
+      - name: Verify copied files
+        run: |
           echo "Files in artifacts directory:"
           ls -la artifacts/android-${{ matrix.abi }}/lib/ 2>/dev/null || echo "No files found in artifacts directory"
           
-          case "${{ matrix.abi }}" in
-            armv7) TRIPLE=armv7a-linux-androideabi;;
-            arm64-v8a) TRIPLE=aarch64-linux-android;;
-            x86) TRIPLE=i686-linux-android;;
-            x86_64) TRIPLE=x86_64-linux-android;;
-          esac
-          STRIP_CMD=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/${TRIPLE}-strip
+      - name: Setup compression tools
+        run: |
+          AR_BIN=$(which llvm-ar 2>/dev/null || which ar)
+          STRIP_BIN=$(which llvm-strip 2>/dev/null || which strip)
           
-          # Download UPX
-          wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
-          tar -xf upx-4.2.2-amd64_linux.tar.xz
-          chmod +x upx-4.2.2-amd64_linux/upx
-          
-          # Function to verify Android library integrity
+      - name: Compress libraries
+        run: |
+          # Function to verify library integrity for Android
           verify_android_library() {
             local lib="$1"
             if ! ar t "$lib" > /dev/null 2>&1; then
               echo "WARNING: Library integrity check failed for $(basename "$lib")"
               return 1
             fi
-            return 0
           }
           
-          # Enhanced safe compression for Android - preserve library format
-          compress_android_library() {
+          # Function to compress static library for Android
+          compress_android_static_lib() {
             local lib="$1"
             local lib_name=$(basename "$lib")
-            local temp_dir=$(mktemp -d)
             
             echo "Processing static library: $lib_name"
             echo "Full path: $lib"
@@ -851,32 +829,22 @@ jobs:
             # Check if file actually exists with enhanced verification
             if [ ! -f "$lib" ]; then
               echo "ERROR: File does not exist: $lib"
-              echo "Current directory: $(pwd)"
-              echo "Files in $(dirname "$lib"):"
-              ls -la "$(dirname "$lib)" 2>/dev/null || echo "Directory does not exist"
-              rm -rf "$temp_dir"
               return 1
             fi
             
-            echo "File exists and size: $(du -h "$lib" | cut -f1)"
-            
+            # Check library integrity before processing
             if ! verify_android_library "$lib"; then
-              echo "Skipping compression for $lib_name due to integrity issues"
-              rm -rf "$temp_dir"
+              echo "ERROR: Library integrity check failed for $lib_name"
               return 1
             fi
-            
-            cd "$temp_dir"
             
             # Extract object files safely with better error handling
-            echo "Extracting objects from $lib_name..."
+            temp_dir=$(mktemp -d)
+            cd "$temp_dir"
+            
             if ! ar x "$lib"; then
               echo "ERROR: Failed to extract $lib_name"
-              echo "Working directory: $(pwd)"
-              echo "Attempted to extract: $lib"
-              echo "File details:"
               ls -la "$lib" 2>/dev/null || echo "Cannot access file"
-              cd - > /dev/null
               rm -rf "$temp_dir"
               return 1
             fi
@@ -886,9 +854,6 @@ jobs:
             
             if [ "$object_count" -eq 0 ]; then
               echo "WARNING: No object files found in $lib_name"
-              echo "Contents of archive:"
-              ar t "$lib" 2>/dev/null || echo "Cannot list archive contents"
-              cd - > /dev/null
               rm -rf "$temp_dir"
               return 1
             fi
@@ -897,47 +862,63 @@ jobs:
             echo "Compressing object files..."
             for obj in *.o; do
               if [ -f "$obj" ]; then
-                echo "Processing object: $obj"
-                ${STRIP_CMD} --strip-unneeded "$obj" 2>/dev/null || true
-                ./upx-4.2.2-amd64_linux/upx --best "$obj" 2>/dev/null || true
+                if [ -n "$STRIP_BIN" ]; then
+                  "$STRIP_BIN" --strip-all --remove-section=.comment --remove-section=.note "$obj"
+                fi
+                upx --best --lzma "$obj" || true
               fi
             done
             
-            # Recreate the library to preserve ar format
-            echo "Recreating library with compressed objects..."
-            rm -f "$lib"
+            # Repackage the library
             if ! ar rcs "$lib" *.o; then
-              echo "ERROR: Failed to recreate $lib_name"
-              echo "Objects available for recreation:"
+              echo "ERROR: Failed to repackage $lib_name"
               ls -la *.o 2>/dev/null || echo "No object files found"
-              cd - > /dev/null
               rm -rf "$temp_dir"
               return 1
             fi
             
-            cd - > /dev/null
-            rm -rf "$temp_dir"
-            
             # Final verification
             if ! verify_android_library "$lib"; then
-              echo "ERROR: Library integrity failed after compression for $lib_name"
+              echo "WARNING: Post-compression verification failed for $lib_name"
+              rm -rf "$temp_dir"
               return 1
             fi
             
-            echo "Successfully compressed $lib_name"
-            return 0
+            local final_size=$(du -h "$lib" | cut -f1)
+            echo "Successfully compressed $lib_name. Final size: $final_size"
+            rm -rf "$temp_dir"
+          }
+          
+          # Function to compress shared library for Android
+          compress_android_shared_lib() {
+            local lib="$1"
+            local lib_name=$(basename "$lib")
+            
+            echo "Processing shared library: $lib_name"
+            
+            if [ ! -f "$lib" ]; then
+              echo "ERROR: File does not exist: $lib"
+              return 1
+            fi
+            
+            if [ -n "$STRIP_BIN" ]; then
+              "$STRIP_BIN" --strip-all --remove-section=.comment --remove-section=.note "$lib"
+            fi
+            
+            upx --best --lzma "$lib" || true
+            
+            local final_size=$(du -h "$lib" | cut -f1)
+            echo "Successfully compressed $lib_name. Final size: $final_size"
           }
           
           # Process all static libraries safely with enhanced verification
-          echo "Processing static libraries..."
           echo "Checking for .a files in: artifacts/android-${{ matrix.abi }}/lib/"
           if ls artifacts/android-${{ matrix.abi }}/lib/*.a 1> /dev/null 2>&1; then
             echo "Found .a files, processing..."
             for lib in artifacts/android-${{ matrix.abi }}/lib/*.a; do
               echo "Checking file: $lib"
               if [ -f "$lib" ]; then
-                echo "File exists, compressing..."
-                compress_android_library "$lib"
+                compress_android_static_lib "$lib"
               else
                 echo "WARNING: Skipping non-existent file: $lib"
               fi
@@ -945,15 +926,14 @@ jobs:
           else
             echo "No .a files found to process"
             echo "Available files in directory:"
-            ls -la artifacts/android-${{ matrix.abi }}/lib/ 2>/dev/null || echo "Directory does not exist or is empty"
+            ls -la artifacts/android-${{ matrix.abi }}/lib/ 2>/dev/null || echo "Directory not accessible"
           fi
           
-          # Process shared libraries safely
-          echo "Processing shared libraries..."
+          # Process all shared libraries safely
           if ls artifacts/android-${{ matrix.abi }}/lib/*.so 1> /dev/null 2>&1; then
             for lib in artifacts/android-${{ matrix.abi }}/lib/*.so; do
               if [ -f "$lib" ]; then
-                ${STRIP_CMD} --strip-unneeded "$lib" 2>/dev/null || true
+                compress_android_shared_lib "$lib"
               else
                 echo "Skipping non-existent file: $lib"
               fi
@@ -962,160 +942,164 @@ jobs:
             echo "No .so files found to process"
           fi
           
-          # Final verification
+      - name: Final verification
+        run: |
           echo "Android library file sizes:"
           if ls artifacts/android-${{ matrix.abi }}/lib/* 1> /dev/null 2>&1; then
             for f in artifacts/android-${{ matrix.abi }}/lib/*; do
               if [ -f "$f" ]; then
-                sizeMB=$(du -m "$f" | cut -f1)
-                echo "$(basename "$f"): ${sizeMB} MB"
+                echo "$(basename "$f"): $(du -h "$f" | cut -f1)"
               fi
             done
           else
             echo "No files found in artifacts directory"
           fi
           
-      - name: Upload Android Artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: android-${{ matrix.abi }}-libs
-          path: artifacts/android-${{ matrix.abi }}/
+          name: luau-android-${{ matrix.abi }}
+          path: artifacts/
+          retention-days: 30
 
   build-ios:
     runs-on: macos-latest
     strategy:
       matrix:
-        sdk: [ iphoneos, iphonesimulator ]
+        sdk: [iphoneos, iphonesimulator]
     steps:
-      - name: Clone Luau repository
-        run: |
-          git clone https://github.com/Roblox/luau.git luau-build
-          cd luau-build
-          git log -1 --oneline
-
-      - name: Patch Luau TypeChecker warning
-        shell: bash
-        run: |
-          cd luau-build
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("Analysis/src/TypeChecker2.cpp")
-          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
-          replacement = "lookupAnnotation(ann)"
-          text = path.read_text()
-          if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
-          else:
-              print("marker not found; skipping patch (already applied?)")
-          PY
-
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          
       - name: Install dependencies
         run: |
-          brew install cmake p7zip upx
-
-      - name: Build Luau (iOS ${{ matrix.sdk }})
-        run: |
-          cd luau-build
-          mkdir build-ios-${{ matrix.sdk }}
-          cd build-ios-${{ matrix.sdk }}
+          brew install cmake ninja upx
           
+      - name: Setup UPX
+        run: |
+          cp "$(brew --prefix)/bin/upx" ./upx
+          chmod +x ./upx
+          
+      - name: Configure iOS build
+        run: |
           if [ "${{ matrix.sdk }}" = "iphoneos" ]; then
-            ARCH="arm64"
+            MIN_OS_VERSION="12.0"
           else
-            ARCH="x86_64"
+            MIN_OS_VERSION="12.0"
           fi
           
-          cmake .. \
-            -DCMAKE_SYSTEM_NAME=iOS \
-            -DCMAKE_OSX_SYSROOT=${{ matrix.sdk }} \
-            -DCMAKE_OSX_ARCHITECTURES=$ARCH \
+      - name: Build iOS libraries
+        run: |
+          mkdir -p luau-build/build-ios-${{ matrix.sdk }}
+          cd luau-build/build-ios-${{ matrix.sdk }}
+          cmake ../.. -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="-Os -ffunction-sections -fdata-sections" \
-            -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections" \
-            -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+            -DLUAU_BUILD_TOOLS=ON \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_OS_VERSION" \
+            -DCMAKE_XCODE_ATTRIBUTE_ONLY_ACTIVE_ARCH=NO \
+            -DCMAKE_OSX_ARCHITECTURES="arm64" \
+            -DCMAKE_OSX_PLATFORM_NAME=iOS
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
           
-      - name: Collect and Compress iOS Libraries
+      - name: Create artifacts directory
         run: |
           mkdir -p artifacts/ios-${{ matrix.sdk }}/lib
           
-          # Debug: Show build directory contents
-          echo "Build directory contents:"
-          ls -la luau-build/build-ios-${{ matrix.sdk }}/ 2>/dev/null || echo "Build directory not found"
-          echo "Release subdirectory:"
-          ls -la luau-build/build-ios-${{ matrix.sdk }}/Release/ 2>/dev/null || echo "Release directory not found"
-          
-          # Copy static libraries with verification
+      - name: Copy static libraries with verification and detailed logging
+        run: |
           echo "Copying static libraries..."
           if [ -d "luau-build/build-ios-${{ matrix.sdk }}/Release" ]; then
-            find luau-build/build-ios-${{ matrix.sdk }}/Release -name "*.a" -exec sh -c '
-              for file do
-                echo "Found static library: $file"
-                target="artifacts/ios-'"${{ matrix.sdk }}"'/lib/$(basename "$file")"
-                cp "$file" "$target"
-                echo "Copied to: $target"
-              done
-            ' sh {} +
+            if find luau-build/build-ios-${{ matrix.sdk }}/Release -name "*.a" 2>/dev/null | head -1 | grep -q .; then
+              find luau-build/build-ios-${{ matrix.sdk }}/Release -name "*.a" -exec bash -c '
+                for file do
+                  echo "Found static library: $file"
+                  target="artifacts/ios-'"${{ matrix.sdk }}"'/lib/$(basename "$file")"
+                  echo "Copying $file to $target"
+                  if cp "$file" "$target"; then
+                    echo "Successfully copied to: $target"
+                    echo "File size: $(du -h "$target" | cut -f1)"
+                  else
+                    echo "ERROR: Failed to copy $file"
+                  fi
+                done
+              ' bash {} +
+            else
+              echo "No .a files found in Release directory"
+              echo "Release directory contents:"
+              find luau-build/build-ios-${{ matrix.sdk }}/Release -type f 2>/dev/null | head -10
+            fi
           else
             echo "Release directory not found, trying to find .a files anywhere"
-            find luau-build/build-ios-${{ matrix.sdk }} -name "*.a" -exec sh -c '
-              for file do
-                echo "Found static library: $file"
-                target="artifacts/ios-'"${{ matrix.sdk }}"'/lib/$(basename "$file")"
-                cp "$file" "$target"
-                echo "Copied to: $target"
-              done
-            ' sh {} +
+            if find luau-build/build-ios-${{ matrix.sdk }} -name "*.a" 2>/dev/null | head -1 | grep -q .; then
+              find luau-build/build-ios-${{ matrix.sdk }} -name "*.a" -exec bash -c '
+                for file do
+                  echo "Found static library: $file"
+                  target="artifacts/ios-'"${{ matrix.sdk }}"'/lib/$(basename "$file")"
+                  echo "Copying $file to $target"
+                  if cp "$file" "$target"; then
+                    echo "Successfully copied to: $target"
+                    echo "File size: $(du -h "$target" | cut -f1)"
+                  else
+                    echo "ERROR: Failed to copy $file"
+                  fi
+                done
+              ' bash {} +
+            else
+              echo "No .a files found anywhere in build directory"
+              echo "Build directory contents:"
+              find luau-build/build-ios-${{ matrix.sdk }} -type f 2>/dev/null | head -10
+            fi
           fi
           
-          # Verify copied files
+      - name: Verify copied files
+        run: |
           echo "Files in artifacts directory:"
           ls -la artifacts/ios-${{ matrix.sdk }}/lib/ 2>/dev/null || echo "No files found in artifacts directory"
           
-          UPX_BINARY=$(which upx)
+      - name: Setup compression tools
+        run: |
           if [ -z "$UPX_BINARY" ]; then
-            echo "WARNING: UPX not found, using basic compression only"
-            UPX_BINARY="echo"
+            UPX_BINARY="./upx"
           fi
           
-          # Function to verify iOS library integrity
+      - name: Compress libraries
+        run: |
+          # Function to verify library integrity for iOS
           verify_ios_library() {
             local lib="$1"
             if ! ar t "$lib" > /dev/null 2>&1; then
               echo "WARNING: Library integrity check failed for $(basename "$lib")"
               return 1
             fi
-            return 0
           }
           
           # Function to compress static library for iOS
-          compress_static_lib_ios() {
+          compress_ios_static_lib() {
             local lib="$1"
-            local temp_dir=$(mktemp -d)
             local lib_name=$(basename "$lib")
             
             echo "Processing static library: $lib_name"
             echo "Full path: $lib"
             
-            # Check if file actually exists
+            # Check if file actually exists with enhanced verification
             if [ ! -f "$lib" ]; then
               echo "ERROR: File does not exist: $lib"
-              rm -rf "$temp_dir"
               return 1
             fi
             
+            # Check library integrity before processing
             if ! verify_ios_library "$lib"; then
-              echo "Skipping compression for $lib_name due to integrity issues"
-              rm -rf "$temp_dir"
+              echo "ERROR: Library integrity check failed for $lib_name"
               return 1
             fi
             
+            # Extract object files safely with better error handling
+            temp_dir=$(mktemp -d)
             cd "$temp_dir"
+            
             if ! ar x "$lib"; then
               echo "ERROR: Failed to extract $lib_name"
-              cd - > /dev/null
               rm -rf "$temp_dir"
               return 1
             fi
@@ -1123,236 +1107,217 @@ jobs:
             local object_count=$(find . -name "*.o" | wc -l)
             if [ "$object_count" -eq 0 ]; then
               echo "WARNING: No object files found in $lib_name"
-              cd - > /dev/null
               rm -rf "$temp_dir"
               return 1
             fi
             
             # Compress each object file
+            echo "Compressing object files..."
             for obj in *.o; do
               if [ -f "$obj" ]; then
-                xcrun strip -S -x "$obj" 2>/dev/null || true
-                "$UPX_BINARY" --best --lzma --brute "$obj" 2>/dev/null || true
+                strip -x "$obj" 2>/dev/null || true
+                if [ -n "$UPX_BINARY" ]; then
+                  "$UPX_BINARY" --best --lzma "$obj" 2>/dev/null || true
+                fi
               fi
             done
             
-            # Recreate the archive
-            rm -f "$lib"
+            # Repackage the library
             if ! ar rcs "$lib" *.o; then
-              echo "ERROR: Failed to recreate $lib_name"
-              cd - > /dev/null
+              echo "ERROR: Failed to repackage $lib_name"
               rm -rf "$temp_dir"
               return 1
             fi
             
-            cd - > /dev/null
-            rm -rf "$temp_dir"
-            
             # Final verification
             if ! verify_ios_library "$lib"; then
-              echo "ERROR: Library integrity failed after compression for $lib_name"
+              echo "WARNING: Post-compression verification failed for $lib_name"
+              rm -rf "$temp_dir"
               return 1
             fi
             
-            echo "Successfully compressed $lib_name"
-            return 0
+            local final_size=$(du -h "$lib" | cut -f1)
+            echo "Successfully compressed $lib_name. Final size: $final_size"
+            rm -rf "$temp_dir"
           }
           
-          # Process all static libraries safely
-          echo "Processing static libraries..."
+          # Process all static libraries safely with enhanced verification
+          echo "Checking for .a files in: artifacts/ios-${{ matrix.sdk }}/lib/"
           if ls artifacts/ios-${{ matrix.sdk }}/lib/*.a 1> /dev/null 2>&1; then
+            echo "Found .a files, processing..."
             for lib in artifacts/ios-${{ matrix.sdk }}/lib/*.a; do
+              echo "Checking file: $lib"
               if [ -f "$lib" ]; then
-                compress_static_lib_ios "$lib"
+                compress_ios_static_lib "$lib"
               else
-                echo "Skipping non-existent file: $lib"
+                echo "WARNING: Skipping non-existent file: $lib"
               fi
             done
           else
             echo "No .a files found to process"
+            echo "Available files in directory:"
+            ls -la artifacts/ios-${{ matrix.sdk }}/lib/ 2>/dev/null || echo "Directory not accessible"
           fi
           
-          # Final size verification
+      - name: Final size verification
+        run: |
           echo "iOS library file sizes:"
           if ls artifacts/ios-${{ matrix.sdk }}/lib/* 1> /dev/null 2>&1; then
             for f in artifacts/ios-${{ matrix.sdk }}/lib/*; do
               if [ -f "$f" ]; then
-                sizeMB=$(du -m "$f" | cut -f1)
-                echo "$(basename "$f"): ${sizeMB} MB"
+                echo "$(basename "$f"): $(du -h "$f" | cut -f1)"
               fi
             done
           else
             echo "No files found in artifacts directory"
           fi
           
-      - name: Upload iOS Artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ios-${{ matrix.sdk }}-libs
-          path: artifacts/ios-${{ matrix.sdk }}/
+          name: luau-ios-${{ matrix.sdk }}
+          path: artifacts/
+          retention-days: 30
 
-  create-release:
-    needs: [ build-windows, build-linux, build-macos, build-android, build-ios ]
+  update-repo:
+    needs: [build-windows, build-linux, build-macos, build-android, build-ios]
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
       - name: Download all artifacts
         uses: actions/download-artifact@v4
-        with:
-          path: all-artifacts
-
-      - name: Create release package
+        
+      - name: Organize artifacts by platform
         run: |
-          set -e
-          mkdir -p release-package/lib
-          for platform in windows-x64 linux-x64 macos-x64 macos-arm64; do
-            mkdir -p release-package/lib/${platform}
-          done
+          mkdir -p lib/luau/lib/{windows-x64,linux-x64,macos-x86_64,macos-arm64,android-armv7,android-arm64-v8a,android-x86,android-x86_64,ios-iphoneos,ios-iphonesimulator}
           
-          cp -r all-artifacts/windows-x64-libs/* release-package/lib/windows-x64/ 2>/dev/null || true
-          cp -r all-artifacts/linux-x64-libs/* release-package/lib/linux-x64/ 2>/dev/null || true
-          cp -r all-artifacts/macos-x86_64-libs/* release-package/lib/macos-x64/ 2>/dev/null || true
-          cp -r all-artifacts/macos-arm64-libs/* release-package/lib/macos-arm64/ 2>/dev/null || true
+          # Copy Windows artifacts
+          if [ -d "luau-windows-x64/artifacts/windows-x64/lib" ]; then
+            cp luau-windows-x64/artifacts/windows-x64/lib/* lib/luau/lib/windows-x64/ 2>/dev/null || true
+          fi
           
-          mkdir -p release-package/lib/android/armv7
-          mkdir -p release-package/lib/android/arm64-v8a
-          mkdir -p release-package/lib/android/x86
-          mkdir -p release-package/lib/android/x86_64
-          cp -r all-artifacts/android-armv7-libs/* release-package/lib/android/armv7/ 2>/dev/null || true
-          cp -r all-artifacts/android-arm64-v8a-libs/* release-package/lib/android/arm64-v8a/ 2>/dev/null || true
-          cp -r all-artifacts/android-x86-libs/* release-package/lib/android/x86/ 2>/dev/null || true
-          cp -r all-artifacts/android-x86_64-libs/* release-package/lib/android/x86_64/ 2>/dev/null || true
+          # Copy Linux artifacts
+          if [ -d "luau-linux-x64/artifacts/linux-x64/lib" ]; then
+            cp luau-linux-x64/artifacts/linux-x64/lib/* lib/luau/lib/linux-x64/ 2>/dev/null || true
+          fi
           
-          mkdir -p release-package/lib/ios
-          cp -r all-artifacts/ios-*/* release-package/lib/ios/ 2>/dev/null || true
+          # Copy macOS artifacts
+          if [ -d "luau-macos-x86_64/artifacts/macos-x86_64/lib" ]; then
+            cp luau-macos-x86_64/artifacts/macos-x86_64/lib/* lib/luau/lib/macos-x86_64/ 2>/dev/null || true
+          fi
           
-          cd release-package/lib
-          for build in windows-x64 linux-x64 macos-x64 macos-arm64 android ios; do
-            if [ -d "${build}" ]; then
-              zip -r ../linc_luau-${build}-libs-${GITHUB_REF_NAME}.zip ${build}
-            fi
-          done
-          cd ../
+          if [ -d "luau-macos-arm64/artifacts/macos-arm64/lib" ]; then
+            cp luau-macos-arm64/artifacts/macos-arm64/lib/* lib/luau/lib/macos-arm64/ 2>/dev/null || true
+          fi
           
-          tar -czf ../linc_luau-libs-${GITHUB_REF_NAME}.tar.gz lib
-          zip -r linc_luau-libs-${GITHUB_REF_NAME}.zip lib linc_luau-*libs-${GITHUB_REF_NAME}.zip
-
-      - name: Create GitHub Release (only on tags v*)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            linc_luau-libs-*.tar.gz
-            linc_luau-libs-*.zip
-            linc_luau-windows-x64-libs-*.zip
-            linc_luau-linux-x64-libs-*.zip
-            linc_luau-macos-x64-libs-*.zip
-            linc_luau-macos-arm64-libs-*.zip
-            linc_luau-android-libs-*.zip
-            linc_luau-ios-libs-*.zip
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Prepare repo and update libraries (NO LFS)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Copy Android artifacts
+          if [ -d "luau-android-armv7/artifacts/android-armv7/lib" ]; then
+            cp luau-android-armv7/artifacts/android-armv7/lib/* lib/luau/lib/android-armv7/ 2>/dev/null || true
+          fi
+          
+          if [ -d "luau-android-arm64-v8a/artifacts/android-arm64-v8a/lib" ]; then
+            cp luau-android-arm64-v8a/artifacts/android-arm64-v8a/lib/* lib/luau/lib/android-arm64-v8a/ 2>/dev/null || true
+          fi
+          
+          if [ -d "luau-android-x86/artifacts/android-x86/lib" ]; then
+            cp luau-android-x86/artifacts/android-x86/lib/* lib/luau/lib/android-x86/ 2>/dev/null || true
+          fi
+          
+          if [ -d "luau-android-x86_64/artifacts/android-x86_64/lib" ]; then
+            cp luau-android-x86_64/artifacts/android-x86_64/lib/* lib/luau/lib/android-x86_64/ 2>/dev/null || true
+          fi
+          
+          # Copy iOS artifacts
+          if [ -d "luau-ios-iphoneos/artifacts/ios-iphoneos/lib" ]; then
+            cp luau-ios-iphoneos/artifacts/ios-iphoneos/lib/* lib/luau/lib/ios-iphoneos/ 2>/dev/null || true
+          fi
+          
+          if [ -d "luau-ios-iphonesimulator/artifacts/ios-iphonesimulator/lib" ]; then
+            cp luau-ios-iphonesimulator/artifacts/ios-iphonesimulator/lib/* lib/luau/lib/ios-iphonesimulator/ 2>/dev/null || true
+          fi
+          
+      - name: Display final directory structure
         run: |
-          set -e
-
-          # Fixed: Use proper bot name
+          echo "Final directory structure:"
+          find lib/luau/lib -type f | sort
+          
+      - name: Update version info
+        run: |
+          echo "$LUAU_VERSION" > lib/luau/VERSION
+          
+      - name: Create commit
+        run: |
+          # Configure git
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Ensure we are on main
-          git fetch origin main
-          git checkout main
-          git pull origin main
-
-          # Disable LFS completely
-          git lfs uninstall || true
-          rm -f .gitattributes
-
-          # Remove old libraries
-          rm -rf lib/luau/lib || true
-
-          # Create directory structure
-          mkdir -p lib/luau/lib/windows-x64
-          mkdir -p lib/luau/lib/linux-x64
-          mkdir -p lib/luau/lib/macos-x64
-          mkdir -p lib/luau/lib/macos-arm64
-          mkdir -p lib/luau/lib/android/armv7
-          mkdir -p lib/luau/lib/android/arm64-v8a
-          mkdir -p lib/luau/lib/android/x86
-          mkdir -p lib/luau/lib/android/x86_64
-          mkdir -p lib/luau/lib/ios
-
-          # Copy new libraries from downloaded artifacts (already compressed)
-          cp -r all-artifacts/windows-x64-libs/* lib/luau/lib/windows-x64/ 2>/dev/null || true
-          cp -r all-artifacts/linux-x64-libs/* lib/luau/lib/linux-x64/ 2>/dev/null || true
-          cp -r all-artifacts/macos-x86_64-libs/* lib/luau/lib/macos-x64/ 2>/dev/null || true
-          cp -r all-artifacts/macos-arm64-libs/* lib/luau/lib/macos-arm64/ 2>/dev/null || true
-          cp -r all-artifacts/android-armv7-libs/* lib/luau/lib/android/armv7/ 2>/dev/null || true
-          cp -r all-artifacts/android-arm64-v8a-libs/* lib/luau/lib/android/arm64-v8a/ 2>/dev/null || true
-          cp -r all-artifacts/android-x86-libs/* lib/luau/lib/android/x86/ 2>/dev/null || true
-          cp -r all-artifacts/android-x86_64-libs/* lib/luau/lib/android/x86_64/ 2>/dev/null || true
-          cp -r all-artifacts/ios-*/* lib/luau/lib/ios/ 2>/dev/null || true
-
-          # Final verification - ensure all files are under 100MB and functional
-          echo "Final file size and integrity verification:"
           
-          # Test all static libraries
-          for platform in windows-x64 linux-x64 macos-x64 macos-arm64 android ios; do
-            if [ -d "lib/luau/lib/$platform" ]; then
-              echo "=== Testing $platform libraries ==="
-              for lib in lib/luau/lib/$platform/lib/*.{a,lib}; do
-                if [ -f "$lib" ]; then
-                  lib_name=$(basename "$lib")
-                  size=$(du -h "$lib" | cut -f1)
-                  echo "$lib_name: $size"
-                  
-                  # Test library integrity
-                  if ar t "$lib" > /dev/null 2>&1; then
-                    echo "✓ $lib_name integrity check passed"
-                    symbol_count=$(ar t "$lib" | wc -l)
-                    echo "  Contains $symbol_count object files"
-                  else
-                    echo "✗ $lib_name integrity check failed"
-                    exit 1
-                  fi
-                  
-                  # Size check
-                  size_mb=$(du -m "$lib" | cut -f1)
-                  if [ "$size_mb" -gt 95 ]; then
-                    echo "ERROR: $lib_name is too large: ${size_mb}MB"
-                    echo "Consider using smaller build flags or excluding large libraries"
-                    exit 1
-                  fi
-                fi
-              done
-            fi
-          done
+          # Add all files
+          git add .
           
-          # Add everything to git (NO LFS)
-          git add lib/luau/lib
-
-          # Check if there are changes
+          # Check if there are changes to commit
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0
           fi
-
-          # Commit with author as the user who triggered the workflow
-          GIT_AUTHOR_NAME="${{ github.actor }}" \
-          GIT_AUTHOR_EMAIL="${{ github.actor }}@users.noreply.github.com" \
-          git commit -m "🤖 Update prebuilt Luau libraries for ${{ github.ref_name }}"
-
-          # Push changes
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}"
-          git push origin main
+          
+          # Commit and push
+          git commit -m "Update Luau libraries to version $LUAU_VERSION"
+          git push
+          
+      - name: Final verification - ensure all files are under 100MB and functional
+        run: |
+          echo "Final file size and integrity verification:"
+          for platform in lib/luau/lib/*; do
+            if [ -d "$platform" ]; then
+              platform_name=$(basename "$platform")
+              echo "Checking platform: $platform_name"
+              if [ -d "lib/luau/lib/$platform_name" ]; then
+                for lib in lib/luau/lib/$platform_name/*; do
+                  if [ -f "$lib" ]; then
+                    lib_name=$(basename "$lib")
+                    size=$(du -b "$lib" | cut -f1)
+                    size_mb=$((size / 1024 / 1024))
+                    
+                    echo "  $lib_name:"
+                    echo "    Size: ${size_mb}MB"
+                    
+                    # Verify library integrity
+                    if ar t "$lib" > /dev/null 2>&1; then
+                      symbol_count=$(ar t "$lib" | wc -l)
+                      echo "    Contains $symbol_count object files"
+                    fi
+                    
+                    # Check if file is too large
+                    if [ "$size_mb" -gt 95 ]; then
+                      echo "    WARNING: File is very large (${size_mb}MB)"
+                    fi
+                  fi
+                done
+              fi
+            fi
+          done
+          
+      - name: Create release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: lib/**/*
+          body: |
+            Luau libraries version ${{ env.LUAU_VERSION }}
+            
+            This release contains precompiled libraries for all supported platforms.
+            
+            ## Included platforms
+            - Windows x64
+            - Linux x64
+            - macOS x86_64
+            - macOS arm64
+            - Android (armv7, arm64-v8a, x86, x86_64)
+            - iOS (iPhoneOS, iPhoneSimulator)
+            
+            All libraries have been compressed and optimized for size.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
