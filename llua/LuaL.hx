@@ -212,7 +212,7 @@ extern class LuaL {
     @:native('linc::luau::load_source')
     static function luau_loadsource_native(l:State, chunkname:String, source:String) : Int;
 
-    public static inline function luau_loadsource(l:State, chunkname:String, source:String, ?useCodegen:Bool = true) : Int {
+    public static inline function luau_loadsource(l:State, chunkname:String, source:String, ?useCodegen:Bool = false) : Int {
       if (!useCodegen) {
         return luau_loadsource_native(l, chunkname, source);
       }
