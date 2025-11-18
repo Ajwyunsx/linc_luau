@@ -5,6 +5,7 @@
 #include "../lib/luau/VM/include/lua.h"
 #include "../lib/luau/VM/include/lualib.h"
 #include "../lib/luau/Compiler/include/luacode.h"
+#include <cstring>
 #include <fstream>
 
 namespace linc {
@@ -58,6 +59,27 @@ namespace linc {
     } //lua
 
     namespace luau {
+
+        ::Array< int > compile_bytecode(const char* source, int optimizationLevel, int debugLevel, int typeInfoLevel, int coverageLevel) {
+            size_t bytecodeSize = 0;
+            lua_CompileOptions opts = {0};
+            opts.optimizationLevel = optimizationLevel;
+            opts.debugLevel = debugLevel;
+            opts.typeInfoLevel = typeInfoLevel;
+            opts.coverageLevel = coverageLevel;
+            char* bytecode = luau_compile(source, (size_t)strlen(source), &opts, &bytecodeSize);
+            if (!bytecode) {
+                return ::Array< int >();
+            }
+
+            ::Array< int > result = ::Array_obj< int >::__new(bytecodeSize);
+            for (size_t i = 0; i < bytecodeSize; ++i) {
+                result->__unsafe_set(i, static_cast< int >(static_cast< unsigned char >(bytecode[i])));
+            }
+
+            free(bytecode);
+            return result;
+        }
 
         int load_source(lua_State* L, const char* chunkname, const char* source) {
             size_t bytecodeSize = 0;

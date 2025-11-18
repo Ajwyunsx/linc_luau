@@ -36,6 +36,7 @@ namespace linc {
     namespace luau {
 
         extern int load_source(lua_State* L, const char* chunkname, const char* source);
+        extern ::Array< int > compile_bytecode(const char* source, int optimizationLevel, int debugLevel, int typeInfoLevel, int coverageLevel);
 
     }
 
@@ -74,3 +75,4 @@ namespace linc {
 
 extern "C" int luaL_ref(lua_State* L, int t);
 extern "C" void luaL_unref(lua_State* L, int t, int ref);
+extern "C" int luaL_loadbuffer(lua_State* L, const char* s, const char* chunkname, size_t sz);
