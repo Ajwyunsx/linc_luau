@@ -58,21 +58,18 @@ jobs:
         run: |
           choco install llvm 7zip -y
           refreshenv
-          # Download UPX with better compatibility
+          # Download UPX
           Invoke-WebRequest -Uri "https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-win64.zip" -OutFile "upx.zip"
           Expand-Archive -Path "upx.zip" -DestinationPath "."
           Move-Item "upx-*/upx.exe" "upx.exe" -Force
 
-      - name: Collect Windows Libraries
+      - name: Collect and Compress Windows Libraries
         shell: pwsh
         run: |
           mkdir -p artifacts/windows-x64/lib
           Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/
           Copy-Item luau-build/build-release/Release/*.dll artifacts/windows-x64/lib/ -ErrorAction SilentlyContinue
-
-      - name: Verify and Compress Windows Libraries
-        shell: pwsh
-        run: |
+          
           $strip = "${env:ProgramFiles}\LLVM\bin\llvm-strip.exe"
           $upxPath = Join-Path $PWD "upx.exe"
           $arPath = "${env:ProgramFiles}\LLVM\bin\llvm-ar.exe"
@@ -80,7 +77,6 @@ jobs:
           function Test-LibraryIntegrity {
             param([string]$LibraryPath)
             try {
-              # Test if the library can be processed by ar
               & $arPath t $LibraryPath | Out-Null
               return $true
             } catch {
@@ -131,6 +127,7 @@ jobs:
               }
               
               Pop-Location
+              Write-Host "Successfully compressed $LibraryName"
             } finally {
               Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -147,23 +144,10 @@ jobs:
             & $upxPath --best --lzma --brute $_.FullName 2>$null
           }
           
-          # Final size verification and 7z fallback
+          # Final size verification
           Get-ChildItem artifacts/windows-x64/lib -File | ForEach-Object {
             $sizeMB = [math]::Round($_.Length / 1MB, 2)
             Write-Host "$($_.Name): $sizeMB MB"
-            
-            if ($sizeMB -gt 90) {
-              Write-Host "Using 7z compression for $($_.Name)"
-              $tempFile = "$($_.FullName).tmp"
-              & 7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on $tempFile $_.FullName
-              Move-Item $tempFile $_.FullName -Force
-              
-              $finalSizeMB = [math]::Round((Get-Item $_.FullName).Length / 1MB, 2)
-              if ($finalSizeMB -gt 95) {
-                Write-Error "File $($_.Name) is still too large: $finalSizeMB MB"
-                exit 1
-              }
-            }
           }
           
       - name: Upload Windows Artifacts
@@ -218,14 +202,12 @@ jobs:
           tar -xf upx-4.2.2-amd64_linux.tar.xz
           chmod +x upx-4.2.2-amd64_linux/upx
 
-      - name: Collect Linux Libraries
+      - name: Collect and Compress Linux Libraries
         run: |
           mkdir -p artifacts/linux-x64/lib
           find luau-build/build-release -name "*.a" -exec cp {} artifacts/linux-x64/lib/ \;
           find luau-build/build-release -name "*.so" -exec cp {} artifacts/linux-x64/lib/ \; 2>/dev/null || true
-
-      - name: Verify and Compress Linux Libraries
-        run: |
+          
           # Function to verify library integrity
           verify_library() {
             local lib="$1"
@@ -236,7 +218,7 @@ jobs:
             return 0
           }
           
-          # Function to compress static library with integrity checking
+          # Function to compress static library with object-level compression
           compress_static_lib() {
             local lib="$1"
             local temp_dir=$(mktemp -d)
@@ -273,25 +255,23 @@ jobs:
             rm -f "$lib"
             ar rcs "$lib" *.o
             
-            # Final integrity check
+            cd - > /dev/null
+            rm -rf "$temp_dir"
+            
+            # Final verification
             if ! verify_library "$lib"; then
               echo "ERROR: Library integrity failed after compression for $lib_name"
-              cd - > /dev/null
-              rm -rf "$temp_dir"
               return 1
             fi
             
-            cd - > /dev/null
-            rm -rf "$temp_dir"
             echo "Successfully compressed $lib_name"
+            return 0
           }
           
-          # Process all static libraries with error handling
+          # Process all static libraries
           for lib in artifacts/linux-x64/lib/*.a; do
             if [ -f "$lib" ]; then
-              if ! compress_static_lib "$lib"; then
-                echo "WARNING: Failed to compress $lib, keeping original"
-              fi
+              compress_static_lib "$lib"
             fi
           done
           
@@ -309,17 +289,6 @@ jobs:
             if [ -f "$f" ]; then
               sizeMB=$(du -m "$f" | cut -f1)
               echo "$(basename "$f"): ${sizeMB} MB"
-              if [ "$sizeMB" -gt 95 ]; then
-                echo "Using 7z compression for $(basename "$f")"
-                7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$f.tmp" "$f" 2>/dev/null || true
-                mv "$f.tmp" "$f" 2>/dev/null || true
-                
-                finalSizeMB=$(du -m "$f" | cut -f1)
-                if [ "$finalSizeMB" -gt 95 ]; then
-                  echo "ERROR: File $(basename "$f") is still too large: ${finalSizeMB} MB"
-                  exit 1
-                fi
-              fi
             fi
           done
           
@@ -403,14 +372,12 @@ jobs:
           cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
           
-      - name: Collect macOS Libraries
+      - name: Collect and Compress macOS Libraries
         run: |
           mkdir -p artifacts/macos-${{ matrix.arch }}/lib
           find luau-build/build-release-${{ matrix.arch }} -name "*.a" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \;
           find luau-build/build-release-${{ matrix.arch }} -name "*.dylib" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \; 2>/dev/null || true
-
-      - name: Verify and Compress macOS Libraries
-        run: |
+          
           UPX_BINARY=$(which upx)
           if [ -z "$UPX_BINARY" ]; then
             echo "WARNING: UPX not found, using basic compression only"
@@ -464,25 +431,23 @@ jobs:
             rm -f "$lib"
             ar rcs "$lib" *.o
             
-            # Final integrity check
+            cd - > /dev/null
+            rm -rf "$temp_dir"
+            
+            # Final verification
             if ! verify_library_macos "$lib"; then
               echo "ERROR: Library integrity failed after compression for $lib_name"
-              cd - > /dev/null
-              rm -rf "$temp_dir"
               return 1
             fi
             
-            cd - > /dev/null
-            rm -rf "$temp_dir"
             echo "Successfully compressed $lib_name"
+            return 0
           }
           
           # Process all static libraries
           for lib in artifacts/macos-${{ matrix.arch }}/lib/*.a; do
             if [ -f "$lib" ]; then
-              if ! compress_static_lib_macos "$lib"; then
-                echo "WARNING: Failed to compress $lib, keeping original"
-              fi
+              compress_static_lib_macos "$lib"
             fi
           done
           
@@ -500,17 +465,6 @@ jobs:
             if [ -f "$f" ]; then
               sizeMB=$(du -m "$f" | cut -f1)
               echo "$(basename "$f"): ${sizeMB} MB"
-              if [ "$sizeMB" -gt 95 ]; then
-                echo "Using 7z compression for $(basename "$f")"
-                7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$f.tmp" "$f" 2>/dev/null || true
-                mv "$f.tmp" "$f" 2>/dev/null || true
-                
-                finalSizeMB=$(du -m "$f" | cut -f1)
-                if [ "$finalSizeMB" -gt 95 ]; then
-                  echo "ERROR: File $(basename "$f") is still too large: ${finalSizeMB} MB"
-                  exit 1
-                fi
-              fi
             fi
           done
           
@@ -612,14 +566,12 @@ jobs:
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(nproc)
           
-      - name: Collect Android Libraries
+      - name: Collect and Compress Android Libraries
         run: |
           mkdir -p artifacts/android-${{ matrix.abi }}/lib
           find luau-build/build-android-${{ matrix.abi }} -name "*.a" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \;
           find luau-build/build-android-${{ matrix.abi }} -name "*.so" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \; 2>/dev/null || true
-
-      - name: Verify and Compress Android Libraries
-        run: |
+          
           case "${{ matrix.abi }}" in
             armv7) TRIPLE=armv7a-linux-androideabi;;
             arm64-v8a) TRIPLE=aarch64-linux-android;;
@@ -628,7 +580,7 @@ jobs:
           esac
           STRIP_CMD=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/${TRIPLE}-strip
           
-          # Download UPX with better error handling
+          # Download UPX
           wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
           tar -xf upx-4.2.2-amd64_linux.tar.xz
           chmod +x upx-4.2.2-amd64_linux/upx
@@ -643,44 +595,74 @@ jobs:
             return 0
           }
           
-          # Conservative compression for Android to avoid compatibility issues
+          # Safe compression for Android - preserve library format
+          compress_android_library() {
+            local lib="$1"
+            local lib_name=$(basename "$lib")
+            local temp_dir=$(mktemp -d)
+            
+            echo "Processing static library: $lib_name"
+            
+            if ! verify_android_library "$lib"; then
+              echo "Skipping compression for $lib_name due to integrity issues"
+              rm -rf "$temp_dir"
+              return 1
+            fi
+            
+            cd "$temp_dir"
+            
+            # Extract object files safely
+            if ! ar x "$lib"; then
+              echo "ERROR: Failed to extract $lib_name"
+              cd - > /dev/null
+              rm -rf "$temp_dir"
+              return 1
+            fi
+            
+            local object_count=$(find . -name "*.o" 2>/dev/null | wc -l)
+            if [ "$object_count" -eq 0 ]; then
+              echo "WARNING: No object files found in $lib_name"
+              cd - > /dev/null
+              rm -rf "$temp_dir"
+              return 1
+            fi
+            
+            # Strip and compress each object file
+            for obj in *.o; do
+              if [ -f "$obj" ]; then
+                ${STRIP_CMD} --strip-unneeded "$obj" 2>/dev/null || true
+                ./upx-4.2.2-amd64_linux/upx --best "$obj" 2>/dev/null || true
+              fi
+            done
+            
+            # Recreate the library to preserve ar format
+            rm -f "$lib"
+            ar rcs "$lib" *.o
+            
+            cd - > /dev/null
+            rm -rf "$temp_dir"
+            
+            # Final verification
+            if ! verify_android_library "$lib"; then
+              echo "ERROR: Library integrity failed after compression for $lib_name"
+              return 1
+            fi
+            
+            echo "Successfully compressed $lib_name"
+            return 0
+          }
+          
+          # Process all static libraries safely
           for lib in artifacts/android-${{ matrix.abi }}/lib/*.a; do
             if [ -f "$lib" ]; then
-              lib_name=$(basename "$lib")
-              echo "Processing static library: $lib_name"
-              
-              if ! verify_android_library "$lib"; then
-                echo "Skipping compression for $lib_name due to integrity issues"
-                continue
-              fi
-              
-              # Conservative approach: just strip without aggressive compression
-              ${STRIP_CMD} --strip-unneeded "$lib" 2>/dev/null || true
-              
-              # Try UPX but don't fail if it doesn't work
-              ./upx-4.2.2-amd64_linux/upx --best "$lib" 2>/dev/null || true
-              
-              # Check size and use 7z if needed
-              sizeMB=$(du -m "$lib" | cut -f1)
-              if [ "$sizeMB" -gt 90 ]; then
-                echo "Using 7z compression for $lib_name"
-                7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$lib.tmp" "$lib" 2>/dev/null || true
-                mv "$lib.tmp" "$lib" 2>/dev/null || true
-                
-                # Final verification
-                if ! verify_android_library "$lib"; then
-                  echo "ERROR: Library integrity failed after compression for $lib_name"
-                  exit 1
-                fi
-              fi
+              compress_android_library "$lib"
             fi
           done
           
-          # Process shared libraries
+          # Process shared libraries (safer compression for .so files)
           for lib in artifacts/android-${{ matrix.abi }}/lib/*.so; do
             if [ -f "$lib" ]; then
               ${STRIP_CMD} --strip-unneeded "$lib" 2>/dev/null || true
-              ./upx-4.2.2-amd64_linux/upx --best "$lib" 2>/dev/null || true
             fi
           done
           
@@ -690,10 +672,6 @@ jobs:
             if [ -f "$f" ]; then
               sizeMB=$(du -m "$f" | cut -f1)
               echo "$(basename "$f"): ${sizeMB} MB"
-              if [ "$sizeMB" -gt 95 ]; then
-                echo "ERROR: File $(basename "$f") is still too large: ${sizeMB} MB"
-                exit 1
-              fi
             fi
           done
           
@@ -759,13 +737,11 @@ jobs:
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
           
-      - name: Collect iOS Libraries
+      - name: Collect and Compress iOS Libraries
         run: |
           mkdir -p artifacts/ios-${{ matrix.sdk }}/lib
           cp luau-build/build-ios-${{ matrix.sdk }}/Release/*.a artifacts/ios-${{ matrix.sdk }}/lib/ 2>/dev/null || true
-
-      - name: Verify and Compress iOS Libraries
-        run: |
+          
           UPX_BINARY=$(which upx)
           if [ -z "$UPX_BINARY" ]; then
             echo "WARNING: UPX not found, using basic compression only"
@@ -819,25 +795,23 @@ jobs:
             rm -f "$lib"
             ar rcs "$lib" *.o
             
-            # Final integrity check
+            cd - > /dev/null
+            rm -rf "$temp_dir"
+            
+            # Final verification
             if ! verify_ios_library "$lib"; then
               echo "ERROR: Library integrity failed after compression for $lib_name"
-              cd - > /dev/null
-              rm -rf "$temp_dir"
               return 1
             fi
             
-            cd - > /dev/null
-            rm -rf "$temp_dir"
             echo "Successfully compressed $lib_name"
+            return 0
           }
           
           # Process all static libraries
           for lib in artifacts/ios-${{ matrix.sdk }}/lib/*.a; do
             if [ -f "$lib" ]; then
-              if ! compress_static_lib_ios "$lib"; then
-                echo "WARNING: Failed to compress $lib, keeping original"
-              fi
+              compress_static_lib_ios "$lib"
             fi
           done
           
@@ -847,17 +821,6 @@ jobs:
             if [ -f "$f" ]; then
               sizeMB=$(du -m "$f" | cut -f1)
               echo "$(basename "$f"): ${sizeMB} MB"
-              if [ "$sizeMB" -gt 95 ]; then
-                echo "Using 7z compression for $(basename "$f")"
-                7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on "$f.tmp" "$f" 2>/dev/null || true
-                mv "$f.tmp" "$f" 2>/dev/null || true
-                
-                finalSizeMB=$(du -m "$f" | cut -f1)
-                if [ "$finalSizeMB" -gt 95 ]; then
-                  echo "ERROR: File $(basename "$f") is still too large: ${finalSizeMB} MB"
-                  exit 1
-                fi
-              fi
             fi
           done
           
@@ -1007,6 +970,7 @@ jobs:
                   size_mb=$(du -m "$lib" | cut -f1)
                   if [ "$size_mb" -gt 95 ]; then
                     echo "ERROR: $lib_name is too large: ${size_mb}MB"
+                    echo "Consider using smaller build flags or excluding large libraries"
                     exit 1
                   fi
                 fi
