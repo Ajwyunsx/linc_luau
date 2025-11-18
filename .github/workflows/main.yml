@@ -164,7 +164,7 @@ jobs:
           export JOBS=$(nproc)
           
           # Process static libraries: Extract → Strip → UPX objects → Re-archive
-          find artifacts/linux-x64/lib -name "*.a" | xargs -P $JOBS -I {} bash -c '
+          find artifacts/linux-x64/lib -name "*.a" | xargs -P $JOBS -n 1 -I {} bash -c '
             lib="{}"
             temp_dir=$(mktemp -d)
             cd "$temp_dir"
@@ -178,7 +178,7 @@ jobs:
           '
           
           # Process shared libraries: Strip → UPX
-          find artifacts/linux-x64/lib -name "*.so" | xargs -P $JOBS -I {} bash -c '
+          find artifacts/linux-x64/lib -name "*.so" | xargs -P $JOBS -n 1 -I {} bash -c '
             strip --strip-unneeded {}
             upx --ultra-brute --lzma {} 2>/dev/null || true
           '
@@ -240,7 +240,7 @@ jobs:
         run: |
           JOBS=$(sysctl -n hw.ncpu)
           
-          find artifacts/macos-${{ matrix.arch }}/lib -name "*.a" | xargs -P $JOBS -I {} bash -c '
+          find artifacts/macos-${{ matrix.arch }}/lib -name "*.a" | xargs -P $JOBS -n 1 -I {} bash -c '
             lib="{}"
             temp_dir=$(mktemp -d)
             cd "$temp_dir"
@@ -253,7 +253,7 @@ jobs:
             rm -rf "$temp_dir"
           '
           
-          find artifacts/macos-${{ matrix.arch }}/lib -name "*.dylib" | xargs -P $JOBS -I {} bash -c '
+          find artifacts/macos-${{ matrix.arch }}/lib -name "*.dylib" | xargs -P $JOBS -n 1 -I {} bash -c '
             strip -S -x {} 2>/dev/null
             upx --ultra-brute --lzma {} 2>/dev/null || true
           '
@@ -340,7 +340,7 @@ jobs:
           
           JOBS=$(nproc)
           
-          find artifacts/android-${{ matrix.abi }}/lib -name "*.a" | xargs -P $JOBS -I {} bash -c '
+          find artifacts/android-${{ matrix.abi }}/lib -name "*.a" | xargs -P $JOBS -n 1 -I {} bash -c '
             lib="{}"
             temp_dir=$(mktemp -d)
             cd "$temp_dir"
@@ -353,7 +353,7 @@ jobs:
             rm -rf "$temp_dir"
           '
           
-          find artifacts/android-${{ matrix.abi }}/lib -name "*.so" | xargs -P $JOBS -I {} bash -c '
+          find artifacts/android-${{ matrix.abi }}/lib -name "*.so" | xargs -P $JOBS -n 1 -I {} bash -c '
             $STRIP --strip-unneeded {}
             upx --ultra-brute --lzma {} 2>/dev/null || true
           '
@@ -419,7 +419,7 @@ jobs:
         run: |
           JOBS=$(sysctl -n hw.ncpu)
           
-          find artifacts/ios-${{ matrix.sdk }}/lib -name "*.a" | xargs -P $JOBS -I {} bash -c '
+          find artifacts/ios-${{ matrix.sdk }}/lib -name "*.a" | xargs -P $JOBS -n 1 -I {} bash -c '
             lib="{}"
             temp_dir=$(mktemp -d)
             cd "$temp_dir"
