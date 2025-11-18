@@ -42,6 +42,7 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       - name: EXTREME Compile Compression (Windows)
+        shell: bash
         run: |
           cd luau-build
           
@@ -49,23 +50,12 @@ jobs:
           
           cmake -B build-release -A x64 \
             -DCMAKE_BUILD_TYPE=MinSizeRel \
-            -DCMAKE_C_FLAGS="/O1 /Ob2 /GL /Gw /GS- /fp:fast \
-              /Oy- /RTC1 /s /Zc:threadSafeInit- \
-              /arch:AVX2 /Oi /Ot /Oy /GF /Gy /Z7 \
-              /d1TrimMode=1 /d1TrimFileName=1 \
-              /MP /std:c++17" \
-            -DCMAKE_CXX_FLAGS="/O1 /Ob2 /GL /Gw /GS- /fp:fast \
-              /Oy- /RTC1 /s /Zc:threadSafeInit- \
-              /arch:AVX2 /Oi /Ot /Oy /GF /Gy /Z7 \
-              /d1TrimMode=1 /d1TrimFileName=1 \
-              /MP /std:c++17 /Zc:inline- /permissive-" \
-            -DCMAKE_EXE_LINKER_FLAGS="/LTCG /OPT:REF /OPT:ICF /DEBUG:NONE /SUBSYSTEM:WINDOWS \
-              /FIXED:NO /HIGHENTROPYVA /guard:cf /guard:ehcont \
-              /incremental:NO /opt:ref /opt:icf /opt:noref /debug:none \
-              /merge:.rdata=.text /merge:.data=.rdata /merge:.rsrc=.text \
-              /section:.text,erw /section:.data,erw" \
+            -DCMAKE_C_FLAGS="/O1 /Ob2 /GL /Gw /GS- /fp:fast /Oy- /RTC1 /s /Zc:threadSafeInit- /arch:AVX2 /Oi /Ot /Oy /GF /Gy /Z7 /d1TrimMode=1 /d1TrimFileName=1 /MP /std:c++17" \
+            -DCMAKE_CXX_FLAGS="/O1 /Ob2 /GL /Gw /GS- /fp:fast /Oy- /RTC1 /s /Zc:threadSafeInit- /arch:AVX2 /Oi /Ot /Oy /GF /Gy /Z7 /d1TrimMode=1 /d1TrimFileName=1 /MP /std:c++17 /Zc:inline- /permissive-" \
+            -DCMAKE_EXE_LINKER_FLAGS="/LTCG /OPT:REF /OPT:ICF /DEBUG:NONE /SUBSYSTEM:WINDOWS /FIXED:NO /HIGHENTROPYVA /guard:cf /guard:ehcont /incremental:NO /opt:ref /opt:icf /opt:noref /debug:none /merge:.rdata=.text /merge:.data=.rdata /merge:.rsrc=.text /section:.text,erw /section:.data,erw" \
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
-          cmake --build build-release --config MinSizeRel -- -p:Ninja=false -p:MinimalRebuild=false
+          
+          cmake --build build-release --config MinSizeRel --parallel
           
           echo "✅ Windows编译完成"
 
@@ -133,33 +123,12 @@ jobs:
           
           cmake -B build-release \
             -DCMAKE_BUILD_TYPE=MinSizeRel \
-            -DCMAKE_C_FLAGS="-Os -flto -fdata-sections -ffunction-sections \
-              -fvisibility=hidden -fmerge-constants -fmerge-constant-segments \
-              -fomit-frame-pointer -fno-exceptions -fno-rtti \
-              -fno-unwind-tables -fno-asynchronous-unwind-tables \
-              -fno-stack-protector -fno-builtin -fno-instrument-functions \
-              -ftree-vectorize -ffast-math -fno-math-errno \
-              -falign-functions=64 -falign-jumps=64 -falign-loops=64 \
-              -fsection-anchors -fstrict-enums \
-              -finline-functions -finline-limit=5000 \
-              -march=x86-64 -mtune=generic -msse4.2 -maes" \
-            -DCMAKE_CXX_FLAGS="-Os -flto -fdata-sections -ffunction-sections \
-              -fvisibility=hidden -fmerge-constants -fmerge-constant-segments \
-              -fomit-frame-pointer -fno-exceptions -fno-rtti \
-              -fno-unwind-tables -fno-asynchronous-unwind-tables \
-              -fno-stack-protector -fno-builtin -fno-instrument-functions \
-              -ftree-vectorize -ffast-math -fno-math-errno \
-              -falign-functions=64 -falign-jumps=64 -falign-loops=64 \
-              -fsection-anchors -fstrict-enums \
-              -finline-functions -finline-limit=5000 \
-              -march=x86-64 -mtune=generic -msse4.2 -maes" \
-            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections -Wl,--strip-all \
-              -Wl,--discard-all -Wl,--icf=all \
-              -Wl,--build-id=sha1 -Wl,--warn-shared-textrel \
-              -flto -Wl,--remove-section=.note \
-              -Wl,--remove-section=.comment -Wl,--strip-debug" \
+            -DCMAKE_C_FLAGS="-Os -flto -fdata-sections -ffunction-sections -fvisibility=hidden -fmerge-constants -fmerge-constant-segments -fomit-frame-pointer -fno-exceptions -fno-rtti -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-builtin -fno-instrument-functions -ftree-vectorize -ffast-math -fno-math-errno -falign-functions=64 -falign-jumps=64 -falign-loops=64 -fsection-anchors -fstrict-enums -finline-functions -finline-limit=5000 -march=x86-64 -mtune=generic -msse4.2 -maes" \
+            -DCMAKE_CXX_FLAGS="-Os -flto -fdata-sections -ffunction-sections -fvisibility=hidden -fmerge-constants -fmerge-constant-segments -fomit-frame-pointer -fno-exceptions -fno-rtti -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-builtin -fno-instrument-functions -ftree-vectorize -ffast-math -fno-math-errno -falign-functions=64 -falign-jumps=64 -falign-loops=64 -fsection-anchors -fstrict-enums -finline-functions -finline-limit=5000 -march=x86-64 -mtune=generic -msse4.2 -maes" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections -Wl,--strip-all -Wl,--discard-all -Wl,--icf=all -Wl,--build-id=sha1 -Wl,--warn-shared-textrel -flto -Wl,--remove-section=.note -Wl,--remove-section=.comment -Wl,--strip-debug" \
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
-          cmake --build build-release --config MinSizeRel -- -j$(nproc)
+          
+          cmake --build build-release --config MinSizeRel --parallel $(nproc)
           
           echo "✅ Linux编译完成"
 
@@ -233,31 +202,12 @@ jobs:
           cmake -B build-${{ matrix.arch }} \
             -DCMAKE_BUILD_TYPE=MinSizeRel \
             -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
-            -DCMAKE_C_FLAGS="-Os -flto -fdata-sections -ffunction-sections \
-              -fvisibility=hidden -fmerge-constants -fmerge-constant-segments \
-              -fomit-frame-pointer -fno-exceptions -fno-rtti \
-              -fno-unwind-tables -fno-asynchronous-unwind-tables \
-              -fno-stack-protector -fno-builtin -fno-instrument-functions \
-              -ftree-vectorize -ffast-math -fno-math-errno \
-              -falign-functions=64 -falign-jumps=64 -falign-loops=64 \
-              -fsection-anchors -fstrict-enums \
-              -finline-functions -finline-limit=5000" \
-            -DCMAKE_CXX_FLAGS="-Os -flto -fdata-sections -ffunction-sections \
-              -fvisibility=hidden -fmerge-constants -fmerge-constant-segments \
-              -fomit-frame-pointer -fno-exceptions -fno-rtti \
-              -fno-unwind-tables -fno-asynchronous-unwind-tables \
-              -fno-stack-protector -fno-builtin -fno-instrument-functions \
-              -ftree-vectorize -ffast-math -fno-math-errno \
-              -falign-functions=64 -falign-jumps=64 -falign-loops=64 \
-              -fsection-anchors -fstrict-enums \
-              -finline-functions -finline-limit=5000" \
-            -DCMAKE_EXE_LINKER_FLAGS="-Wl,-dead_strip_dylibs \
-              -Wl,-dead_strip -Wl,-x \
-              -flto -Wl,-no_compact_unwind \
-              -Wl,-no_deduplicate \
-              -Wl,-search_paths_first" \
+            -DCMAKE_C_FLAGS="-Os -flto -fdata-sections -ffunction-sections -fvisibility=hidden -fmerge-constants -fmerge-constant-segments -fomit-frame-pointer -fno-exceptions -fno-rtti -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-builtin -fno-instrument-functions -ftree-vectorize -ffast-math -fno-math-errno -falign-functions=64 -falign-jumps=64 -falign-loops=64 -fsection-anchors -fstrict-enums -finline-functions -finline-limit=5000" \
+            -DCMAKE_CXX_FLAGS="-Os -flto -fdata-sections -ffunction-sections -fvisibility=hidden -fmerge-constants -fmerge-constant-segments -fomit-frame-pointer -fno-exceptions -fno-rtti -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-builtin -fno-instrument-functions -ftree-vectorize -ffast-math -fno-math-errno -falign-functions=64 -falign-jumps=64 -falign-loops=64 -fsection-anchors -fstrict-enums -finline-functions -finline-limit=5000" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,-dead_strip_dylibs -Wl,-dead_strip -Wl,-x -flto -Wl,-no_compact_unwind -Wl,-no_deduplicate -Wl,-search_paths_first" \
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
-          cmake --build build-${{ matrix.arch }} --config MinSizeRel -- -j$(sysctl -n hw.ncpu)
+          
+          cmake --build build-${{ matrix.arch }} --config MinSizeRel --parallel $(sysctl -n hw.ncpu)
           
           echo "✅ macOS编译完成"
 
@@ -340,31 +290,12 @@ jobs:
             -DANDROID_ABI=$ANDROID_ABI \
             -DANDROID_PLATFORM=android-21 \
             -DCMAKE_BUILD_TYPE=MinSizeRel \
-            -DCMAKE_C_FLAGS="-Os -flto -fdata-sections -ffunction-sections \
-              -fvisibility=hidden -fmerge-constants -fmerge-constant-segments \
-              -fomit-frame-pointer -fno-exceptions -fno-rtti \
-              -fno-unwind-tables -fno-asynchronous-unwind-tables \
-              -fno-stack-protector -fno-builtin -fno-instrument-functions \
-              -ftree-vectorize -ffast-math -fno-math-errno \
-              -falign-functions=64 -falign-jumps=64 -falign-loops=64 \
-              -fsection-anchors -fstrict-enums -fflat \
-              -finline-functions -finline-limit=5000" \
-            -DCMAKE_CXX_FLAGS="-Os -flto -fdata-sections -ffunction-sections \
-              -fvisibility=hidden -fmerge-constants -fmerge-constant-segments \
-              -fomit-frame-pointer -fno-exceptions -fno-rtti \
-              -fno-unwind-tables -fno-asynchronous-unwind-tables \
-              -fno-stack-protector -fno-builtin -fno-instrument-functions \
-              -ftree-vectorize -ffast-math -fno-math-errno \
-              -falign-functions=64 -falign-jumps=64 -falign-loops=64 \
-              -fsection-anchors -fstrict-enums -fflat \
-              -finline-functions -finline-limit=5000" \
-            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections -Wl,--strip-all \
-              -Wl,--discard-all -Wl,--icf=all \
-              -Wl,--build-id=sha1 -Wl,--warn-shared-textrel \
-              -flto -Wl,--remove-section=.note \
-              -Wl,--remove-section=.comment -Wl,--strip-debug" \
+            -DCMAKE_C_FLAGS="-Os -flto -fdata-sections -ffunction-sections -fvisibility=hidden -fmerge-constants -fmerge-constant-segments -fomit-frame-pointer -fno-exceptions -fno-rtti -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-builtin -fno-instrument-functions -ftree-vectorize -ffast-math -fno-math-errno -falign-functions=64 -falign-jumps=64 -falign-loops=64 -fsection-anchors -fstrict-enums -fflat -finline-functions -finline-limit=5000" \
+            -DCMAKE_CXX_FLAGS="-Os -flto -fdata-sections -ffunction-sections -fvisibility=hidden -fmerge-constants -fmerge-constant-segments -fomit-frame-pointer -fno-exceptions -fno-rtti -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-builtin -fno-instrument-functions -ftree-vectorize -ffast-math -fno-math-errno -falign-functions=64 -falign-jumps=64 -falign-loops=64 -fsection-anchors -fstrict-enums -fflat -finline-functions -finline-limit=5000" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections -Wl,--strip-all -Wl,--discard-all -Wl,--icf=all -Wl,--build-id=sha1 -Wl,--warn-shared-textrel -flto -Wl,--remove-section=.note -Wl,--remove-section=.comment -Wl,--strip-debug" \
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
-          cmake --build build-${{ matrix.abi }} --config MinSizeRel -- -j$(nproc)
+          
+          cmake --build build-${{ matrix.abi }} --config MinSizeRel --parallel $(nproc)
           
           echo "✅ Android编译完成"
 
@@ -441,31 +372,12 @@ jobs:
             -DCMAKE_OSX_SYSROOT=${{ matrix.sdk }} \
             -DCMAKE_OSX_ARCHITECTURES=$ARCH \
             -DCMAKE_BUILD_TYPE=MinSizeRel \
-            -DCMAKE_C_FLAGS="-Os -flto -fdata-sections -ffunction-sections \
-              -fvisibility=hidden -fmerge-constants -fmerge-constant-segments \
-              -fomit-frame-pointer -fno-exceptions -fno-rtti \
-              -fno-unwind-tables -fno-asynchronous-unwind-tables \
-              -fno-stack-protector -fno-builtin -fno-instrument-functions \
-              -ftree-vectorize -ffast-math -fno-math-errno \
-              -falign-functions=64 -falign-jumps=64 -falign-loops=64 \
-              -fsection-anchors -fstrict-enums \
-              -finline-functions -finline-limit=5000" \
-            -DCMAKE_CXX_FLAGS="-Os -flto -fdata-sections -ffunction-sections \
-              -fvisibility=hidden -fmerge-constants -fmerge-constant-segments \
-              -fomit-frame-pointer -fno-exceptions -fno-rtti \
-              -fno-unwind-tables -fno-asynchronous-unwind-tables \
-              -fno-stack-protector -fno-builtin -fno-instrument-functions \
-              -ftree-vectorize -ffast-math -fno-math-errno \
-              -falign-functions=64 -falign-jumps=64 -falign-loops=64 \
-              -fsection-anchors -fstrict-enums \
-              -finline-functions -finline-limit=5000" \
-            -DCMAKE_EXE_LINKER_FLAGS="-Wl,-dead_strip_dylibs \
-              -Wl,-dead_strip -Wl,-x \
-              -flto -Wl,-no_compact_unwind \
-              -Wl,-no_deduplicate \
-              -Wl,-search_paths_first" \
+            -DCMAKE_C_FLAGS="-Os -flto -fdata-sections -ffunction-sections -fvisibility=hidden -fmerge-constants -fmerge-constant-segments -fomit-frame-pointer -fno-exceptions -fno-rtti -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-builtin -fno-instrument-functions -ftree-vectorize -ffast-math -fno-math-errno -falign-functions=64 -falign-jumps=64 -falign-loops=64 -fsection-anchors -fstrict-enums -finline-functions -finline-limit=5000" \
+            -DCMAKE_CXX_FLAGS="-Os -flto -fdata-sections -ffunction-sections -fvisibility=hidden -fmerge-constants -fmerge-constant-segments -fomit-frame-pointer -fno-exceptions -fno-rtti -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-builtin -fno-instrument-functions -ftree-vectorize -ffast-math -fno-math-errno -falign-functions=64 -falign-jumps=64 -falign-loops=64 -fsection-anchors -fstrict-enums -finline-functions -finline-limit=5000" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,-dead_strip_dylibs -Wl,-dead_strip -Wl,-x -flto -Wl,-no_compact_unwind -Wl,-no_deduplicate -Wl,-search_paths_first" \
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
-          cmake --build build-${{ matrix.sdk }} --config MinSizeRel -- -j$(sysctl -n hw.ncpu)
+          
+          cmake --build build-${{ matrix.sdk }} --config MinSizeRel --parallel $(sysctl -n hw.ncpu)
           
           echo "✅ iOS编译完成"
 
