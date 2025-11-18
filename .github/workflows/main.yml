@@ -1,3 +1,13 @@
+# Updated workflow: removed in-place 7z archives for build artifacts,
+# kept normal strip/UPX steps, enforced size checks, and fixed git push.
+# Changes:
+# - Removed all occurrences that replaced libraries with 7z archives (".tmp" mv -> overwrite).
+# - Keep strip / llvm-strip / xcrun strip and upx for dynamic libraries.
+# - If a library remains too large, the job fails instead of being replaced by a 7z archive.
+# - Fixed git push to push back to the current branch (no stray human text after push).
+#
+# Paste this file into .github/workflows/main.yml in your repository.
+
 name: Build & Update Luau Libraries
 
 permissions:
@@ -63,7 +73,7 @@ jobs:
         shell: pwsh
         run: |
           mkdir -p artifacts/windows-x64/lib
-          Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/
+          Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/ -ErrorAction SilentlyContinue
           Copy-Item luau-build/build-release/Release/*.dll artifacts/windows-x64/lib/ -ErrorAction SilentlyContinue
 
       - name: Ultra compress libraries
@@ -77,28 +87,24 @@ jobs:
           
           Get-ChildItem artifacts/windows-x64/lib -File | ForEach-Object {
             $file = $_
+            # Try to strip debug / unneeded symbols where possible
             & $strip --strip-debug $file.FullName 2>$null
             & $strip --strip-unneeded $file.FullName 2>$null
             
             $originalSize = [math]::Round($file.Length / 1MB, 2)
             
             if ($file.Extension -eq ".lib") {
-              if ($originalSize -gt 80) {
-                & $sevenZ a $env:SEVEN_ZIP_FLAGS "$($file.FullName).tmp" $file.FullName
-                Move-Item "$($file.FullName).tmp" $file.FullName -Force
-              }
+              # For static libraries (.lib) we only strip symbols — do NOT replace the file with an archive.
+              Write-Host "Stripped static lib: $($file.Name)"
             } else {
-              & C:\tools\upx.exe --ultra-brute $file.FullName 2>$null
-              $newSize = [math]::Round((Get-Item $file.FullName).Length / 1MB, 2)
-              if ($newSize -gt 90) {
-                & $sevenZ a $env:SEVEN_ZIP_FLAGS "$($file.FullName).tmp" $file.FullName
-                Move-Item "$($file.FullName).tmp" $file.FullName -Force
-              }
+              # For DLL / dynamic files: run UPX to compress executables (safe for binaries)
+              & C:\tools\upx.exe --ultra-brute $file.FullName 2>$null || Write-Host "UPX failed or not applicable for $($file.Name)"
             }
             
             $finalSize = [math]::Round((Get-Item $file.FullName).Length / 1MB, 2)
             Write-Host "$($file.Name): $originalSize MB → $finalSize MB"
             
+            # Enforce size limit instead of converting to an archive in-place
             if ($finalSize -gt 95) {
               Write-Error "$($file.Name) too large: $finalSize MB"
               exit 1
@@ -156,21 +162,26 @@ jobs:
         run: |
           export JOBS=$(nproc)
           
+          # For static libs: strip symbols but DO NOT replace them with archives
           find artifacts/linux-x64/lib -name "*.a" -size +80M | xargs -P $JOBS -I {} bash -c '
-            strip --strip-unneeded {} 2>/dev/null
-            7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+            strip --strip-unneeded {} 2>/dev/null || true
+            echo "Stripped static lib: {}"
           '
           
+          # For shared libs: strip then try UPX; but if still too large, fail rather than convert to archive
           find artifacts/linux-x64/lib -name "*.so" | xargs -P $JOBS -I {} bash -c '
-            strip --strip-unneeded {} 2>/dev/null
+            strip --strip-unneeded {} 2>/dev/null || true
             upx --ultra-brute {} 2>/dev/null || true
-            [ $(stat -c%s {}) -gt 94371840 ] && 7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+            size=$(stat -c%s {})
+            echo "{}: ${size} bytes"
+            [ $size -lt 99614720 ] || (echo "{} too large after strip/upx" && exit 1)
           '
           
+          # Final size listing and enforcement
           find artifacts/linux-x64/lib -type f -exec bash -c '
-            size=$(stat -c%s $1)
+            size=$(stat -c%s "$1")
             sizeMB=$((size / 1048576))
-            echo "$1: ${sizeMB}MB"
+            printf "%-80s %6dMB\n" "$1" "$sizeMB"
             [ $size -lt 99614720 ] || exit 1
           ' _ {} \;
 
@@ -225,19 +236,23 @@ jobs:
         run: |
           JOBS=$(sysctl -n hw.ncpu)
           
+          # Static archives: strip only
           find artifacts/macos-${{ matrix.arch }}/lib -name "*.a" -size +80M | xargs -P $JOBS -I {} bash -c '
-            strip -S -x {} 2>/dev/null
-            7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+            strip -S -x {} 2>/dev/null || true
+            echo "Stripped static lib: {}"
           '
           
+          # Shared libs: strip and try UPX; fail if still too large
           find artifacts/macos-${{ matrix.arch }}/lib -name "*.dylib" | xargs -P $JOBS -I {} bash -c '
-            strip -S -x {} 2>/dev/null
+            strip -S -x {} 2>/dev/null || true
             upx --ultra-brute {} 2>/dev/null || true
-            [ $(stat -f%z {}) -gt 94371840 ] && 7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+            size=$(stat -f%z {})
+            echo "{}: ${size} bytes"
+            [ $size -lt 99614720 ] || (echo "{} too large after strip/upx" && exit 1)
           '
           
           find artifacts/macos-${{ matrix.arch }}/lib -type f -exec bash -c '
-            size=$(stat -f%z $1)
+            size=$(stat -f%z "$1")
             sizeMB=$((size / 1048576))
             echo "$1: ${sizeMB}MB"
             [ $size -lt 99614720 ] || exit 1
@@ -320,19 +335,23 @@ jobs:
           
           JOBS=$(nproc)
           
+          # Static libs: strip only
           find artifacts/android-${{ matrix.abi }}/lib -name "*.a" -size +80M | xargs -P $JOBS -I {} bash -c '
-            $STRIP --strip-unneeded {} 2>/dev/null
-            7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+            $STRIP --strip-unneeded {} 2>/dev/null || true
+            echo "Stripped static lib: {}"
           '
           
+          # Shared libs: strip + upx, fail if still too large
           find artifacts/android-${{ matrix.abi }}/lib -name "*.so" | xargs -P $JOBS -I {} bash -c '
-            $STRIP --strip-unneeded {}
+            $STRIP --strip-unneeded {} 2>/dev/null || true
             upx --ultra-brute {} 2>/dev/null || true
-            [ $(stat -c%s {}) -gt 94371840 ] && 7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+            size=$(stat -c%s {})
+            echo "{}: ${size} bytes"
+            [ $size -lt 99614720 ] || (echo "{} too large after strip/upx" && exit 1)
           '
           
           find artifacts/android-${{ matrix.abi }}/lib -type f -exec bash -c '
-            size=$(stat -c%s $1)
+            size=$(stat -c%s "$1")
             sizeMB=$((size / 1048576))
             echo "$1: ${sizeMB}MB"
             [ $size -lt 99614720 ] || exit 1
@@ -394,13 +413,15 @@ jobs:
         run: |
           JOBS=$(sysctl -n hw.ncpu)
           
+          # Static libs: strip only
           find artifacts/ios-${{ matrix.sdk }}/lib -name "*.a" -size +80M | xargs -P $JOBS -I {} bash -c '
-            xcrun strip -S -x {} 2>/dev/null
-            7z a '"$SEVEN_ZIP_FLAGS"' {}.tmp {} && mv {}.tmp {}
+            xcrun strip -S -x {} 2>/dev/null || true
+            echo "Stripped static lib: {}"
           '
           
+          # Enforce size limit
           find artifacts/ios-${{ matrix.sdk }}/lib -type f -exec bash -c '
-            size=$(stat -f%z $1)
+            size=$(stat -f%z "$1")
             sizeMB=$((size / 1048576))
             echo "$1: ${sizeMB}MB"
             [ $size -lt 99614720 ] || exit 1
@@ -506,10 +527,12 @@ jobs:
           wait
           
           echo "Final size verification:"
-          find lib/luau/lib -type f -exec bash -c 's=$(stat -c%s $1); printf "%-80s %6dMB\n" "$1" $((s/1048576)); [ $s -lt 99614720 ] || exit 1' _ {} \;
+          find lib/luau/lib -type f -exec bash -c 's=$(stat -c%s "$1"); printf "%-80s %6dMB\n" "$1" $((s/1048576)); [ $s -lt 99614720 ] || exit 1' _ {} \;
           
           git add lib/luau/lib
           git diff --cached --quiet && echo "No changes" && exit 0
           
           git commit -m "🤖 Update prebuilt Luau libraries"
-          git push origin HEAD:main
+          # Push back to the same branch the workflow was triggered on
+          TARGET_BRANCH="${GITHUB_REF##*/}"
+          git push origin "HEAD:${TARGET_BRANCH}"
