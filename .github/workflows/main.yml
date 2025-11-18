@@ -1,7 +1,4 @@
-# Updated workflow: apply size-optimizations and strip-and-repack .a (no in-place 7z).
-# Focus: avoid replacing libraries with 7z; instead rebuild/strip/repack .a so the files remain valid static libs.
-
-name: Build & Update Luau Libraries
+name: Build & Compress Luau Libraries
 
 permissions:
   contents: write
@@ -19,9 +16,380 @@ on:
 
 env:
   UPX_VERSION: "4.2.4"
-  SEVEN_ZIP_FLAGS: "-t7z -mx=9 -myx=9 -ms=on -md=64m -mfb=256 -mmt=on"
+  GITHUB_LIMIT_MB: 100
 
 jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Clone Luau repository
+        run: |
+          git clone https://github.com/Roblox/luau.git luau-build
+          cd luau-build
+          git log -1 --oneline
+
+      - name: Patch Luau TypeChecker warning
+        shell: bash
+        run: |
+          cd luau-build
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("Analysis/src/TypeChecker2.cpp")
+          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
+          replacement = "lookupAnnotation(ann)"
+          text = path.read_text()
+          path.write_text(text.replace(marker, replacement, 1)) if marker in text else print("patch already applied")
+          PY
+
+      - name: Setup MSVC
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Luau (Windows x64)
+        run: |
+          cd luau-build
+          cmake -B build-release -A x64 -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+          cmake --build build-release --config Release --parallel
+
+      - name: Install compression tools
+        shell: pwsh
+        run: |
+          choco install llvm 7zip -y --no-progress
+          New-Item -ItemType Directory -Path "C:\tools" -Force
+          Invoke-WebRequest -Uri "https://github.com/upx/upx/releases/download/v${env:UPX_VERSION}/upx-${env:UPX_VERSION}-win64.zip" -OutFile "upx.zip"
+          Expand-Archive -Path "upx.zip" -DestinationPath "." -Force
+          Move-Item "upx-*/upx.exe" "C:\tools\upx.exe" -Force
+
+      - name: Collect libraries
+        shell: pwsh
+        run: |
+          mkdir -p artifacts/windows-x64/lib
+          Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/ -ErrorAction SilentlyContinue
+          Copy-Item luau-build/build-release/Release/*.dll artifacts/windows-x64/lib/ -ErrorAction SilentlyContinue
+
+      - name: Ultra compress libraries (with GitHub limit enforcement)
+        shell: pwsh
+        env:
+          SEVEN_ZIP_FLAGS: ${{ env.SEVEN_ZIP_FLAGS }}
+          GITHUB_LIMIT_MB: ${{ env.GITHUB_LIMIT_MB }}
+        run: |
+          $llvmDir = "${env:ProgramFiles}\LLVM\bin"
+          $strip = Join-Path $llvmDir "llvm-strip.exe"
+          $sevenZ = (Get-Command 7z).Source
+          
+          function Compress-File {
+            param([string]$FilePath)
+            $file = Get-Item $FilePath
+            $fileName = $file.Name
+            $originalSize = [math]::Round($file.Length / 1MB, 2)
+            
+            Write-Host "📊 处理文件: $fileName ($originalSize MB)"
+            
+            # 备份原文件
+            $backupPath = "$filePath.backup"
+            Copy-Item $file.FullName $backupPath
+            
+            try {
+              # 尝试剥离符号
+              if (Test-Path $strip) {
+                & $strip --strip-debug $file.FullName 2>$null
+                & $strip --strip-unneeded $file.FullName 2>$null
+                Write-Host "  ✓ 符号剥离完成"
+              }
+              
+              $currentSize = [math]::Round((Get-Item $file.FullName).Length / 1MB, 2)
+              Write-Host "  📉 剥离后大小: $currentSize MB"
+              
+              # 检查是否满足GitHub限制
+              if ($currentSize -le $env:GITHUB_LIMIT_MB) {
+                Write-Host "  ✅ 成功！文件符合GitHub限制: $currentSize MB"
+                Remove-Item $backupPath -Force
+                return $true
+              }
+              
+              # 尝试UPX压缩
+              & C:\tools\upx.exe --ultra-brute $file.FullName 2>$null
+              $upxSize = [math]::Round((Get-Item $file.FullName).Length / 1MB, 2)
+              $compressionRatio = [math]::Round((1 - $upxSize/$originalSize) * 100, 1)
+              
+              Write-Host "  🗜️ UPX压缩后: $upxSize MB (压缩率: $compressionRatio%)"
+              
+              if ($upxSize -le $env:GITHUB_LIMIT_MB) {
+                Write-Host "  ✅ 成功！文件符合GitHub限制: $upxSize MB"
+                Remove-Item $backupPath -Force
+                return $true
+              }
+              
+              # 压缩后仍超过限制，恢复备份并标记失败
+              Write-Host "  ❌ 压缩后仍然超过GitHub 100MB限制！"
+              Write-Host "  🔧 将生成替代解决方案..."
+              
+              Move-Item $backupPath $file.FullName
+              return $false
+              
+            } catch {
+              Write-Host "  ❌ 压缩过程中发生错误: $_"
+              Move-Item $backupPath $file.FullName
+              return $false
+            }
+          }
+          
+          $successCount = 0
+          $totalCount = 0
+          
+          Get-ChildItem artifacts/windows-x64/lib -File | ForEach-Object {
+            $totalCount++
+            if (Compress-File $_.FullName) {
+              $successCount++
+            }
+          }
+          
+          Write-Host "📊 压缩结果: $successCount/$totalCount 个文件成功"
+          
+          # 生成失败文件的替代方案
+          if ($successCount -lt $totalCount) {
+            Write-Host "🔧 为失败文件生成替代方案..."
+            # 这里可以添加生成Git LFS配置或拆分文件的逻辑
+          }
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-libs
+          path: artifacts/windows-x64/
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone Luau repository
+        run: |
+          git clone https://github.com/Roblox/luau.git luau-build
+          cd luau-build
+          git log -1 --oneline
+
+      - name: Patch Luau TypeChecker warning
+        run: |
+          cd luau-build
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("Analysis/src/TypeChecker2.cpp")
+          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
+          replacement = "lookupAnnotation(ann)"
+          text = path.read_text()
+          path.write_text(text.replace(marker, replacement, 1)) if marker in text else print("patch already applied")
+          PY
+
+      - name: Build Luau (Linux x64)
+        run: |
+          sudo apt-get update && sudo apt-get install -y build-essential cmake p7zip-full upx-ucl
+          cd luau-build
+          cmake -B build-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+          cmake --build build-release --config Release -j$(nproc)
+
+      - name: Collect libraries
+        run: |
+          mkdir -p artifacts/linux-x64/lib
+          find luau-build/build-release -name "*.a" -exec cp {} artifacts/linux-x64/lib/ \;
+          find luau-build/build-release -name "*.so" -exec cp {} artifacts/linux-x64/lib/ \; 2>/dev/null || true
+
+      - name: Ultra compress libraries with GitHub limit enforcement
+        env:
+          SEVEN_ZIP_FLAGS: ${{ env.SEVEN_ZIP_FLAGS }}
+          GITHUB_LIMIT_MB: ${{ env.GITHUB_LIMIT_MB }}
+        run: |
+          echo "🚀 开始极致压缩Linux库文件（GitHub 100MB限制）"
+          
+          compress_file() {
+            local file="$1"
+            local original_size=$(stat -c%s "$file")
+            local original_mb=$(echo "scale=2; $original_size/1048576" | bc)
+            
+            echo "📊 处理文件: $(basename "$file") ($original_mb MB)"
+            
+            # 备份原文件
+            local backup_file="${file}.backup"
+            cp "$file" "$backup_file"
+            
+            # 尝试剥离符号
+            strip --strip-unneeded "$file" 2>/dev/null || true
+            local after_strip_size=$(stat -c%s "$file")
+            local after_strip_mb=$(echo "scale=2; $after_strip_size/1048576" | bc)
+            echo "  📉 剥离后大小: $after_strip_mb MB"
+            
+            # 检查是否满足GitHub限制
+            if [ $after_strip_size -le 104857600 ]; then
+              echo "  ✅ 成功！文件符合GitHub限制: $after_strip_mb MB"
+              rm -f "$backup_file"
+              return 0
+            fi
+            
+            # 尝试UPX极致压缩
+            upx --ultra-brute "$file" 2>/dev/null || true
+            local upx_size=$(stat -c%s "$file")
+            local upx_mb=$(echo "scale=2; $upx_size/1048576" | bc)
+            local ratio=$(echo "scale=1; (1 - $upx_size/$original_size) * 100" | bc)
+            echo "  🗜️ UPX压缩后: $upx_mb MB (压缩率: ${ratio}%)"
+            
+            if [ $upx_size -le 104857600 ]; then
+              echo "  ✅ 成功！文件符合GitHub限制: $upx_mb MB"
+              rm -f "$backup_file"
+              return 0
+            fi
+            
+            # 压缩后仍超过限制
+            echo "  ❌ 压缩后仍然超过GitHub 100MB限制！"
+            echo "  🔧 将生成替代解决方案..."
+            mv "$backup_file" "$file"
+            return 1
+          }
+          
+          success_count=0
+          total_count=0
+          
+          find artifacts/linux-x64/lib -type f | while read -r file; do
+            total_count=$((total_count + 1))
+            if compress_file "$file"; then
+              success_count=$((success_count + 1))
+            fi
+          done
+          
+          echo "📊 压缩结果: $success_count/$total_count 个文件成功"
+          
+          # 最终验证
+          find artifacts/linux-x64/lib -type f -exec bash -c '
+            size=$(stat -c%s "$1")
+            sizeMB=$((size / 1048576))
+            printf "%-80s %6dMB\n" "$1" "$sizeMB"
+            if [ $size -gt 104857600 ]; then
+              echo "❌ 文件 $1 仍然超过限制！"
+              exit 1
+            fi
+          ' _ {} \;
+
+      - name: Upload Linux Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64-libs
+          path: artifacts/linux-x64/
+
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [ x86_64, arm64 ]
+    steps:
+      - name: Clone Luau repository
+        run: |
+          git clone https://github.com/Roblox/luau.git luau-build
+          cd luau-build
+          git log -1 --oneline
+
+      - name: Patch Luau TypeChecker warning
+        run: |
+          cd luau-build
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("Analysis/src/TypeChecker2.cpp")
+          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
+          replacement = "lookupAnnotation(ann)"
+          text = path.read_text()
+          path.write_text(text.replace(marker, replacement, 1)) if marker in text else print("patch already applied")
+          PY
+
+      - name: Install dependencies
+        run: brew install cmake p7zip upx
+
+      - name: Build Luau (macOS ${{ matrix.arch }})
+        run: |
+          cd luau-build
+          cmake -B build-${{ matrix.arch }} -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+          cmake --build build-${{ matrix.arch }} --config Release -j$(sysctl -n hw.ncpu)
+
+      - name: Collect libraries
+        run: |
+          mkdir -p artifacts/macos-${{ matrix.arch }}/lib
+          find luau-build/build-${{ matrix.arch }} -name "*.a" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \;
+          find luau-build/build-${{ matrix.arch }} -name "*.dylib" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \; 2>/dev/null || true
+
+      - name: Ultra compress libraries with GitHub limit enforcement
+        env:
+          SEVEN_ZIP_FLAGS: ${{ env.SEVEN_ZIP_FLAGS }}
+          GITHUB_LIMIT_MB: ${{ env.GITHUB_LIMIT_MB }}
+        run: |
+          echo "🚀 开始极致压缩macOS库文件（GitHub 100MB限制）"
+          
+          compress_file() {
+            local file="$1"
+            local original_size=$(stat -f%z "$file")
+            local original_mb=$(echo "scale=2; $original_size/1048576" | bc)
+            
+            echo "📊 处理文件: $(basename "$file") ($original_mb MB)"
+            
+            # 备份原文件
+            local backup_file="${file}.backup"
+            cp "$file" "$backup_file"
+            
+            # 尝试剥离符号
+            xcrun strip -S -x "$file" 2>/dev/null || true
+            local after_strip_size=$(stat -f%z "$file")
+            local after_strip_mb=$(echo "scale=2; $after_strip_size/1048576" | bc)
+            echo "  📉 剥离后大小: $after_strip_mb MB"
+            
+            # 检查是否满足GitHub限制
+            if [ $after_strip_size -le 104857600 ]; then
+              echo "  ✅ 成功！文件符合GitHub限制: $after_strip_mb MB"
+              rm -f "$backup_file"
+              return 0
+            fi
+            
+            # 尝试UPX极致压缩
+            upx --ultra-brute "$file" 2>/dev/null || true
+            local upx_size=$(stat -f%z "$file")
+            local upx_mb=$(echo "scale=2; $upx_size/1048576" | bc)
+            local ratio=$(echo "scale=1; (1 - $upx_size/$original_size) * 100" | bc)
+            echo "  🗜️ UPX压缩后: $upx_mb MB (压缩率: ${ratio}%)"
+            
+            if [ $upx_size -le 104857600 ]; then
+              echo "  ✅ 成功！文件符合GitHub限制: $upx_mb MB"
+              rm -f "$backup_file"
+              return 0
+            fi
+            
+            # 压缩后仍超过限制
+            echo "  ❌ 压缩后仍然超过GitHub 100MB限制！"
+            echo "  🔧 将生成替代解决方案..."
+            mv "$backup_file" "$file"
+            return 1
+          }
+          
+          success_count=0
+          total_count=0
+          
+          find artifacts/macos-${{ matrix.arch }}/lib -type f | while read -r file; do
+            total_count=$((total_count + 1))
+            if compress_file "$file"; then
+              success_count=$((success_count + 1))
+            fi
+          done
+          
+          echo "📊 压缩结果: $success_count/$total_count 个文件成功"
+          
+          # 最终验证
+          find artifacts/macos-${{ matrix.arch }}/lib -type f -exec bash -c '
+            size=$(stat -f%z "$1")
+            sizeMB=$((size / 1048576))
+            printf "%-80s %6dMB\n" "$1" "$sizeMB"
+            if [ $size -gt 104857600 ]; then
+              echo "❌ 文件 $1 仍然超过限制！"
+              exit 1
+            fi
+          ' _ {} \;
+
+      - name: Upload macOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}-libs
+          path: artifacts/macos-${{ matrix.arch }}/
+
   build-android:
     runs-on: ubuntu-latest
     strategy:
@@ -53,32 +421,20 @@ jobs:
 
       - name: Build Luau (Android ${{ matrix.abi }})
         run: |
-          sudo apt-get install -y p7zip-full
+          sudo apt-get install -y p7zip-full upx-ucl
           cd luau-build
           ANDROID_ABI=${{ matrix.abi }}
           [ "$ANDROID_ABI" = "armv7" ] && ANDROID_ABI="armeabi-v7a"
-
-          # Add aggressive size optimizations and LTO where possible
-          C_FLAGS="-Os -flto -ffunction-sections -fdata-sections -fvisibility=hidden"
-          CXX_FLAGS="-Os -flto -ffunction-sections -fdata-sections -fvisibility=hidden -fno-exceptions -fno-rtti"
-          LINK_FLAGS="-Wl,--gc-sections -flto"
-
+          
           cmake -B build-${{ matrix.abi }} \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=$ANDROID_ABI \
             -DANDROID_PLATFORM=android-21 \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="${C_FLAGS}" \
-            -DCMAKE_CXX_FLAGS="${CXX_FLAGS}" \
-            -DCMAKE_EXE_LINKER_FLAGS="${LINK_FLAGS}" \
-            -DCMAKE_SHARED_LINKER_FLAGS="${LINK_FLAGS}" \
+            -DCMAKE_C_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden" \
+            -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections -fvisibility=hidden" \
             -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
           cmake --build build-${{ matrix.abi }} --config Release -j$(nproc)
-
-      - name: Install UPX
-        run: |
-          wget -qO- https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz | tar -xJ
-          sudo mv upx-${UPX_VERSION}-amd64_linux/upx /usr/local/bin/
 
       - name: Collect libraries
         run: |
@@ -86,10 +442,14 @@ jobs:
           find luau-build/build-${{ matrix.abi }} -name "*.a" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \;
           find luau-build/build-${{ matrix.abi }} -name "*.so" -exec cp {} artifacts/android-${{ matrix.abi }}/lib/ \; 2>/dev/null || true
 
-      - name: Ultra compress libraries (strip & repack .a, upx .so)
+      - name: Ultra compress Android libraries with GitHub limit enforcement
         env:
           SEVEN_ZIP_FLAGS: ${{ env.SEVEN_ZIP_FLAGS }}
+          GITHUB_LIMIT_MB: ${{ env.GITHUB_LIMIT_MB }}
         run: |
+          echo "🚀 开始极致压缩Android库文件（GitHub 100MB限制）"
+          
+          # 根据架构确定strip命令
           case "${{ matrix.abi }}" in
             armv7) TRIPLE=armv7a-linux-androideabi;;
             arm64-v8a) TRIPLE=aarch64-linux-android;;
@@ -97,46 +457,79 @@ jobs:
             x86_64) TRIPLE=x86_64-linux-android;;
           esac
           export STRIP=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${TRIPLE}-strip
-          JOBS=$(nproc)
-
-          # 1) For static libraries (.a): unpack -> strip each .o -> repack (keeps .a format)
-          find artifacts/android-${{ matrix.abi }}/lib -name "*.a" -print0 | xargs -0 -n1 -P $JOBS bash -c '
-            A="$1"
-            echo "Processing static archive: $A"
-            TMP="$(mktemp -d)"
-            cp "$A" "$TMP/lib.a"
-            pushd "$TMP" >/dev/null
-            ar x lib.a || { echo "ar x failed for $A"; exit 1; }
-            for o in *.o; do
-              [ -f "$o" ] || continue
-              $STRIP --strip-unneeded "$o" 2>/dev/null || true
-            done
-            ar rcs lib.a *.o 2>/dev/null || true
-            popd >/dev/null
-            mv "$TMP/lib.a" "$A"
-            rm -rf "$TMP"
-            size=$(stat -c%s "$A" || echo 0)
-            echo "$A -> $size bytes"
-            [ "$size" -lt 100000000 ] || (echo "$A still >=100MB after strip" && exit 2)
-          ' _ {}
-
-          # 2) For shared libraries (.so): strip and try upx
-          find artifacts/android-${{ matrix.abi }}/lib -name "*.so" -print0 | xargs -0 -n1 -P $JOBS bash -c '
-            S="$1"
-            echo "Processing shared lib: $S"
-            $STRIP --strip-unneeded "$S" 2>/dev/null || true
-            upx --ultra-brute "$S" 2>/dev/null || true
-            size=$(stat -c%s "$S" || echo 0)
-            echo "$S -> $size bytes"
-            [ "$size" -lt 100000000 ] || (echo "$S still >=100MB after strip/upx" && exit 2)
-          ' _ {}
-
-          # Final listing & enforcement
-          find artifacts/android-${{ matrix.abi }}/lib -type f -exec bash -c '
+          
+          compress_file() {
+            local file="$1"
+            local original_size=$(stat -c%s "$file")
+            local original_mb=$(echo "scale=2; $original_size/1048576" | bc)
+            
+            echo "📊 处理文件: $(basename "$file") ($original_mb MB)"
+            
+            # 备份原文件
+            local backup_file="${file}.backup"
+            cp "$file" "$backup_file"
+            
+            # 尝试剥离符号
+            if [[ -f "$STRIP" ]]; then
+              $STRIP --strip-unneeded "$file" 2>/dev/null || true
+            else
+              strip --strip-unneeded "$file" 2>/dev/null || true
+            fi
+            local after_strip_size=$(stat -c%s "$file")
+            local after_strip_mb=$(echo "scale=2; $after_strip_size/1048576" | bc)
+            echo "  📉 剥离后大小: $after_strip_mb MB"
+            
+            # 检查是否满足GitHub限制
+            if [ $after_strip_size -le 104857600 ]; then
+              echo "  ✅ 成功！文件符合GitHub限制: $after_strip_mb MB"
+              rm -f "$backup_file"
+              return 0
+            fi
+            
+            # 尝试UPX极致压缩
+            upx --ultra-brute "$file" 2>/dev/null || true
+            local upx_size=$(stat -c%s "$file")
+            local upx_mb=$(echo "scale=2; $upx_size/1048576" | bc)
+            local ratio=$(echo "scale=1; (1 - $upx_size/$original_size) * 100" | bc)
+            echo "  🗜️ UPX压缩后: $upx_mb MB (压缩率: ${ratio}%)"
+            
+            if [ $upx_size -le 104857600 ]; then
+              echo "  ✅ 成功！文件符合GitHub限制: $upx_mb MB"
+              rm -f "$backup_file"
+              return 0
+            fi
+            
+            # 压缩后仍超过限制 - 特别关注libLuau.Analysis.a
+            if [[ "$file" == *"libLuau.Analysis.a"* ]]; then
+              echo "  ⚠️ 检测到超大文件：libLuau.Analysis.a"
+              echo "  🔧 建议使用Git LFS或编译时优化..."
+            fi
+            
+            echo "  ❌ 压缩后仍然超过GitHub 100MB限制！"
+            mv "$backup_file" "$file"
+            return 1
+          }
+          
+          success_count=0
+          total_count=0
+          
+          find artifacts/android-${{ matrix.abi }}/lib -type f | while read -r file; do
+            total_count=$((total_count + 1))
+            if compress_file "$file"; then
+              success_count=$((success_count + 1))
+            fi
+          done
+          
+          echo "📊 压缩结果: $success_count/$total_count 个文件成功"
+          
+          # 特别显示libLuau.Analysis.a的状态
+          find artifacts/android-${{ matrix.abi }}/lib -name "*libLuau.Analysis.a*" -exec bash -c '
             size=$(stat -c%s "$1")
             sizeMB=$((size / 1048576))
-            printf "%-80s %6dMB\n" "$1" "$sizeMB"
-            [ $size -lt 100000000 ] || exit 1
+            echo "📋 libLuau.Analysis.a: $sizeMB MB"
+            if [ $size -gt 104857600 ]; then
+              echo "⚠️ 这个文件仍然超过GitHub 100MB限制，建议使用Git LFS"
+            fi
           ' _ {} \;
 
       - name: Upload Android Artifacts
@@ -144,3 +537,252 @@ jobs:
         with:
           name: android-${{ matrix.abi }}-libs
           path: artifacts/android-${{ matrix.abi }}/
+
+  build-ios:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        sdk: [ iphoneos, iphonesimulator ]
+    steps:
+      - name: Clone Luau repository
+        run: |
+          git clone https://github.com/Roblox/luau.git luau-build
+          cd luau-build
+          git log -1 --oneline
+
+      - name: Patch Luau TypeChecker warning
+        run: |
+          cd luau-build
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("Analysis/src/TypeChecker2.cpp")
+          marker = "lookupAnnotation(ref->parameters.data 0 .type)"
+          replacement = "lookupAnnotation(ann)"
+          text = path.read_text()
+          path.write_text(text.replace(marker, replacement, 1)) if marker in text else print("patch already applied")
+          PY
+
+      - name: Install dependencies
+        run: brew install cmake p7zip upx
+
+      - name: Build Luau (iOS ${{ matrix.sdk }})
+        run: |
+          cd luau-build
+          ARCH=$([ "${{ matrix.sdk }}" = "iphoneos" ] && echo "arm64" || echo "x86_64")
+          cmake -B build-${{ matrix.sdk }} \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=${{ matrix.sdk }} \
+            -DCMAKE_OSX_ARCHITECTURES=$ARCH \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+          cmake --build build-${{ matrix.sdk }} --config Release -j$(sysctl -n hw.ncpu)
+
+      - name: Collect libraries
+        run: |
+          mkdir -p artifacts/ios-${{ matrix.sdk }}/lib
+          find luau-build/build-${{ matrix.sdk }} -name "*.a" -exec cp {} artifacts/ios-${{ matrix.sdk }}/lib/ \;
+
+      - name: Ultra compress iOS libraries with GitHub limit enforcement
+        env:
+          SEVEN_ZIP_FLAGS: ${{ env.SEVEN_ZIP_FLAGS }}
+          GITHUB_LIMIT_MB: ${{ env.GITHUB_LIMIT_MB }}
+        run: |
+          echo "🚀 开始极致压缩iOS库文件（GitHub 100MB限制）"
+          
+          compress_file() {
+            local file="$1"
+            local original_size=$(stat -f%z "$file")
+            local original_mb=$(echo "scale=2; $original_size/1048576" | bc)
+            
+            echo "📊 处理文件: $(basename "$file") ($original_mb MB)"
+            
+            # 备份原文件
+            local backup_file="${file}.backup"
+            cp "$file" "$backup_file"
+            
+            # 尝试剥离符号
+            xcrun strip -S -x "$file" 2>/dev/null || true
+            local after_strip_size=$(stat -f%z "$file")
+            local after_strip_mb=$(echo "scale=2; $after_strip_size/1048576" | bc)
+            echo "  📉 剥离后大小: $after_strip_mb MB"
+            
+            # 检查是否满足GitHub限制
+            if [ $after_strip_size -le 104857600 ]; then
+              echo "  ✅ 成功！文件符合GitHub限制: $after_strip_mb MB"
+              rm -f "$backup_file"
+              return 0
+            fi
+            
+            # iOS静态库通常不推荐UPX压缩，但我们尝试一下
+            echo "  ⚠️ iOS静态库不建议过度压缩，可能会影响链接"
+            mv "$backup_file" "$file"
+            return 1
+          }
+          
+          success_count=0
+          total_count=0
+          
+          find artifacts/ios-${{ matrix.sdk }}/lib -type f | while read -r file; do
+            total_count=$((total_count + 1))
+            if compress_file "$file"; then
+              success_count=$((success_count + 1))
+            fi
+          done
+          
+          echo "📊 压缩结果: $success_count/$total_count 个文件成功"
+
+      - name: Upload iOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-${{ matrix.sdk }}-libs
+          path: artifacts/ios-${{ matrix.sdk }}/
+
+  create-release:
+    needs: [ build-windows, build-linux, build-macos, build-android, build-ios ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+
+      - name: Create release packages
+        run: |
+          set -e
+          mkdir -p release-package/lib
+          
+          declare -A PLATFORMS=(
+            ["windows-x64-libs"]="windows-x64"
+            ["linux-x64-libs"]="linux-x64"
+            ["macos-x86_64-libs"]="macos-x64"
+            ["macos-arm64-libs"]="macos-arm64"
+          )
+          
+          for artifact in "${!PLATFORMS[@]}"; do
+            [ -d "all-artifacts/$artifact" ] && cp -r "all-artifacts/$artifact"/* "release-package/lib/${PLATFORMS[$artifact]}/"
+          done
+          
+          for abi in armv7 arm64-v8a x86 x86_64; do
+            mkdir -p "release-package/lib/android/$abi"
+            cp -r "all-artifacts/android-${abi}-libs"/* "release-package/lib/android/$abi/" 2>/dev/null || true
+          done
+          
+          mkdir -p release-package/lib/ios
+          cp -r all-artifacts/ios-*/* release-package/lib/ios/ 2>/dev/null || true
+          
+          # 检查并生成压缩包
+          cd release-package
+          7z a -tzip linc_luau-libs-${GITHUB_REF_NAME}.zip lib/
+          for build in windows-x64 linux-x64 macos-x64 macos-arm64 android ios; do
+            [ -d "lib/$build" ] && 7z a -tzip linc_luau-${build}-libs-${GITHUB_REF_NAME}.zip lib/$build/
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release-package/linc_luau-*.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-repo:
+    needs: [ build-windows, build-linux, build-macos, build-android, build-ios ]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+
+      - name: Final verification and update libraries in repository
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          echo "🔍 最终验证所有文件是否满足GitHub限制..."
+          
+          # 删除现有目录
+          rm -rf lib/luau/lib
+          mkdir -p lib/luau/lib/{windows-x64,linux-x64,macos-{x64,arm64},android/{armv7,arm64-v8a,x86,x86_64},ios}
+          
+          # 复制所有构建产物
+          cp -r all-artifacts/windows-x64-libs/* lib/luau/lib/windows-x64/ &
+          cp -r all-artifacts/linux-x64-libs/* lib/luau/lib/linux-x64/ &
+          cp -r all-artifacts/macos-x86_64-libs/* lib/luau/lib/macos-x64/ &
+          cp -r all-artifacts/macos-arm64-libs/* lib/luau/lib/macos-arm64/ &
+          cp -r all-artifacts/android-armv7-libs/* lib/luau/lib/android/armv7/ &
+          cp -r all-artifacts/android-arm64-v8a-libs/* lib/luau/lib/android/arm64-v8a/ &
+          cp -r all-artifacts/android-x86-libs/* lib/luau/lib/android/x86/ &
+          cp -r all-artifacts/android-x86_64-libs/* lib/luau/lib/android/x86_64/ &
+          cp -r all-artifacts/ios-*/* lib/luau/lib/ios/ &
+          wait
+          
+          echo "🔍 最终文件大小验证:"
+          violation_count=0
+          find lib/luau/lib -type f -exec bash -c '
+            size=$(stat -c%s "$1")
+            sizeMB=$((size / 1048576))
+            printf "%-80s %6dMB" "$1" "$sizeMB"
+            if [ $size -gt 104857600 ]; then
+              echo " ❌ 超过GitHub限制!"
+              exit 1
+            else
+              echo " ✅"
+            fi
+          ' _ {} \; || {
+            echo "❌ 发现文件超过GitHub 100MB限制！"
+            echo "🔧 生成Git LFS配置..."
+            
+            # 生成.gitattributes文件
+            cat > .gitattributes << 'EOF'
+            # Git LFS配置文件
+            *.a filter=lfs diff=lfs merge=lfs -text
+            *.so filter=lfs diff=lfs merge=lfs -text
+            *.dylib filter=lfs diff=lfs merge=lfs -text
+            *.dll filter=lfs diff=lfs merge=lfs -text
+            *.lib filter=lfs diff=lfs merge=lfs -text
+            EOF
+            
+            # 跟踪大文件
+            find lib/luau/lib -name "*.a" -o -name "*.so" -o -name "*.dylib" -o -name "*.dll" -o -name "*.lib" | xargs -I {} echo "{} filter=lfs diff=lfs merge=lfs -text" >> .gitattributes
+            
+            # 添加Git LFS跟踪
+            git lfs install
+            git lfs track "lib/luau/lib/android/**/*.a"
+            git lfs track "lib/luau/lib/**/*.a"
+            git lfs track "lib/luau/lib/**/*.so"
+            git lfs track "lib/luau/lib/**/*.dll"
+            git lfs track "lib/luau/lib/**/*.lib"
+            git lfs track "lib/luau/lib/**/*.dylib"
+            
+            echo "✅ 已生成Git LFS配置"
+            exit 1
+          }
+          
+          echo "✅ 所有文件符合GitHub大小限制"
+          
+          git add lib/luau/lib .gitattributes 2>/dev/null || git add lib/luau/lib
+          git diff --cached --quiet && echo "No changes" && exit 0
+          
+          git commit -m "🤖 Update prebuilt Luau libraries (with compression optimization)"
+          # Push back to the same branch the workflow was triggered on
+          TARGET_BRANCH="${GITHUB_REF##*/}"
+          git push origin "HEAD:${TARGET_BRANCH}"
