@@ -517,6 +517,10 @@ extern class Lua {
 	@:native('linc::helpers::register_hxtrace_func')
 	static function register_hxtrace_func(f:cpp.Callable<String->Int>) : Void;
 
+	// Luau bytecode loading
+	@:native('linc::luau::load_bytecode')
+	static function luau_loadbytecode(l:State, chunkname:String, bytecode:Array<Int>) : Int;
+
 } //Lua
 
 

@@ -69,8 +69,10 @@ class CodeGen {
             return Lua.LUA_ERRSYNTAX;
         }
 
-        var buffer = bytesToString(bytecode);
-        return LuaL.loadbuffer(luaState, buffer, bytecode.length, chunkName);
+        // Use luau_loadbytecode instead of loadbuffer
+        // This properly handles binary bytecode instead of treating it as text
+        // Fixes crashes with Chinese/UTF-8 characters in source code
+        return Lua.luau_loadbytecode(luaState, chunkName, bytecode);
     }
 
     public static function loadSource(
@@ -83,6 +85,7 @@ class CodeGen {
             return Lua.LUA_ERRSYNTAX;
         }
 
+        // Try to compile to bytecode and load it
         var bytecode = compileToBytecode(source);
         if (bytecode != null && bytecode.length > 0) {
             var loadStatus = loadBytecode(luaState, bytecode, chunkName);
@@ -91,7 +94,9 @@ class CodeGen {
             }
         }
 
-        return fallbackToNative ? LuaL.luau_loadsource(luaState, chunkName, source) : Lua.LUA_ERRSYNTAX;
+        // If compilation failed and fallback is enabled, use native loader directly
+        // NOTE: We call luau_loadsource_native directly to avoid circular dependency
+        return fallbackToNative ? LuaL.luau_loadsource_native(luaState, chunkName, source) : Lua.LUA_ERRSYNTAX;
     }
 
     public static function getCompilationStats():Dynamic {
@@ -154,14 +159,6 @@ class CodeGen {
             return fallback;
         }
         return value;
-    }
-
-    static function bytesToString(bytes:Array<Int>):String {
-        var builder = new StringBuf();
-        for (byte in bytes) {
-            builder.addChar(byte & 0xFF);
-        }
-        return builder.toString();
     }
 
     @:native("linc::luau::compile_bytecode")

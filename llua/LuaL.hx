@@ -212,11 +212,20 @@ extern class LuaL {
     @:native('linc::luau::load_source')
     static function luau_loadsource_native(l:State, chunkname:String, source:String) : Int;
 
-    public static inline function luau_loadsource(l:State, chunkname:String, source:String, ?useCodegen:Bool = false) : Int {
+    public static inline function luau_loadsource(l:State, chunkname:String, source:String, ?useCodegen:Bool = true) : Int {
       if (!useCodegen) {
         return luau_loadsource_native(l, chunkname, source);
       }
-      return CodeGen.loadSource(l, chunkname, source);
+      
+      // Try CodeGen compilation first, without fallback to prevent circular calls
+      var result = CodeGen.loadSource(l, chunkname, source, false);
+      
+      // If CodeGen fails, manually fallback to native
+      if (result != Lua.LUA_OK) {
+        return luau_loadsource_native(l, chunkname, source);
+      }
+      
+      return result;
     }
 
     // Luau sandbox helpers (safeenv)
