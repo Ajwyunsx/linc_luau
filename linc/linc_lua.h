@@ -37,6 +37,7 @@ namespace linc {
 
         extern int load_source(lua_State* L, const char* chunkname, const char* source);
         extern ::Array< int > compile_bytecode(const char* source, int optimizationLevel, int debugLevel, int typeInfoLevel, int coverageLevel);
+        extern int load_bytecode(lua_State* L, const char* chunkname, ::Array< int > bytecode);
 
     }
 

@@ -60,14 +60,30 @@ namespace linc {
 
     namespace luau {
 
+        // Helper function to skip UTF-8 BOM if present
+        // BOM is 0xEF 0xBB 0xBF in UTF-8 (U+FEFF)
+        static const char* skipBOM(const char* source, size_t& length) {
+            if (length >= 3 && 
+                (unsigned char)source[0] == 0xEF && 
+                (unsigned char)source[1] == 0xBB && 
+                (unsigned char)source[2] == 0xBF) {
+                // Skip the 3-byte BOM
+                return source + 3;
+            }
+            return source;
+        }
+
         ::Array< int > compile_bytecode(const char* source, int optimizationLevel, int debugLevel, int typeInfoLevel, int coverageLevel) {
+            size_t sourceLength = strlen(source);
+            const char* processedSource = skipBOM(source, sourceLength);
+            
             size_t bytecodeSize = 0;
             lua_CompileOptions opts = {0};
             opts.optimizationLevel = optimizationLevel;
             opts.debugLevel = debugLevel;
             opts.typeInfoLevel = typeInfoLevel;
             opts.coverageLevel = coverageLevel;
-            char* bytecode = luau_compile(source, (size_t)strlen(source), &opts, &bytecodeSize);
+            char* bytecode = luau_compile(processedSource, strlen(processedSource), &opts, &bytecodeSize);
             if (!bytecode) {
                 return ::Array< int >();
             }
@@ -82,13 +98,16 @@ namespace linc {
         }
 
         int load_source(lua_State* L, const char* chunkname, const char* source) {
+            size_t sourceLength = strlen(source);
+            const char* processedSource = skipBOM(source, sourceLength);
+            
             size_t bytecodeSize = 0;
             lua_CompileOptions opts = {0};
             opts.optimizationLevel = 1;
             opts.debugLevel = 2;
             opts.typeInfoLevel = 0;
             opts.coverageLevel = 0;
-            char* bytecode = luau_compile(source, (size_t)strlen(source), &opts, &bytecodeSize);
+            char* bytecode = luau_compile(processedSource, strlen(processedSource), &opts, &bytecodeSize);
             if (!bytecode) {
                 return LUA_ERRMEM;
             }
@@ -98,14 +117,36 @@ namespace linc {
             return result;
         }
 
+        int load_bytecode(lua_State* L, const char* chunkname, ::Array< int > bytecode) {
+            // Convert Haxe array to C byte array
+            size_t size = bytecode->length;
+            char* buffer = (char*)malloc(size);
+            if (!buffer) {
+                return LUA_ERRMEM;
+            }
+            
+            for (size_t i = 0; i < size; ++i) {
+                buffer[i] = static_cast<char>(static_cast<unsigned char>(bytecode[i]));
+            }
+            
+            // Use luau_load for bytecode (not luaL_loadbuffer!)
+            // This properly handles compiled bytecode including UTF-8 source
+            int result = luau_load(L, chunkname, buffer, size, 0);
+            free(buffer);
+            return result;
+        }
+
     } //luau
 
     extern "C" int luaL_dostring(lua_State* L, const char* s) {
+        size_t sourceLength = strlen(s);
+        const char* processedSource = linc::luau::skipBOM(s, sourceLength);
+        
         size_t bytecodeSize = 0;
         lua_CompileOptions opts = {0};
         opts.optimizationLevel = 1;
         opts.debugLevel = 2;
-        char* bytecode = luau_compile(s, (size_t)strlen(s), &opts, &bytecodeSize);
+        char* bytecode = luau_compile(processedSource, strlen(processedSource), &opts, &bytecodeSize);
         if (!bytecode) return LUA_ERRMEM;
         int r = luau_load(L, "chunk", bytecode, bytecodeSize, 0);
         free(bytecode);
@@ -117,11 +158,16 @@ namespace linc {
         std::ifstream ifs(filename, std::ios::binary);
         if (!ifs) { lua_pushfstring(L, "cannot open %s", filename); return LUA_ERRERR; }
         std::string src((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+        
+        // Strip BOM if present
+        size_t sourceLength = src.size();
+        const char* processedSource = linc::luau::skipBOM(src.c_str(), sourceLength);
+        
         size_t bytecodeSize = 0;
         lua_CompileOptions opts = {0};
         opts.optimizationLevel = 1;
         opts.debugLevel = 2;
-        char* bytecode = luau_compile(src.c_str(), (size_t)src.size(), &opts, &bytecodeSize);
+        char* bytecode = luau_compile(processedSource, strlen(processedSource), &opts, &bytecodeSize);
         if (!bytecode) { lua_pushstring(L, "compile error"); return LUA_ERRSYNTAX; }
         int r = luau_load(L, filename, bytecode, bytecodeSize, 0);
         free(bytecode);
