@@ -24,7 +24,7 @@ class LuaRequire {
         if (basePaths != null) {
             searchPaths.set(l, basePaths);
         } else {
-            searchPaths.set(l, ['./', 'mods/', 'scripts/']);
+            searchPaths.set(l, ['./', 'mods/', 'scripts/']); // wtf fnf???
         }
         
         Lua.newtable(l);
