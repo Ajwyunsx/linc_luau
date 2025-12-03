@@ -860,7 +860,7 @@ jobs:
           # Commit with author as the user who triggered the workflow
           GIT_AUTHOR_NAME="${{ github.actor }}" \
           GIT_AUTHOR_EMAIL="${{ github.actor }}@users.noreply.github.com" \
-          git commit -m "🤖 Update prebuilt Luau libraries for ${{ github.ref_name }}"
+          git commit -m "Update prebuilt Luau libraries for ${{ github.ref_name }}"
 
           # Push changes
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}"
