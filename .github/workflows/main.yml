@@ -1,4 +1,3 @@
-
 name: Build & Update Luau Libraries
 
 permissions:
@@ -6,7 +5,7 @@ permissions:
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '*/30 * * * *'  # 每30分钟运行一次
   workflow_dispatch:
   push:
     branches: [ main, master ]
@@ -16,12 +15,47 @@ on:
       - 'v*'
 
 jobs:
+  check-updates:
+    runs-on: ubuntu-latest
+    outputs:
+      should-build: ${{ steps.check-changes.outputs.should-build }}
+      latest-commit: ${{ steps.check-changes.outputs.latest-commit }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Check for updates in luau-lang/luau
+        id: check-changes
+        run: |
+          # 获取luau-lang/luau的最新commit hash
+          LATEST_COMMIT=$(git ls-remote https://github.com/luau-lang/luau HEAD | awk '{print $1}')
+          
+          # 读取上次记录的commit hash
+          if [ -f .last_luau_commit ]; then
+            LAST_COMMIT=$(cat .last_luau_commit)
+          else
+            LAST_COMMIT=""
+          fi
+          
+          # 比较commit hash
+          if [ "$LATEST_COMMIT" != "$LAST_COMMIT" ]; then
+            echo "should-build=true" >> $GITHUB_OUTPUT
+            echo "latest-commit=$LATEST_COMMIT" >> $GITHUB_OUTPUT
+            echo "New commit detected: $LATEST_COMMIT"
+          else
+            echo "should-build=false" >> $GITHUB_OUTPUT
+            echo "latest-commit=$LAST_COMMIT" >> $GITHUB_OUTPUT
+            echo "No new commits found"
+          fi
+
   build-windows:
+    needs: check-updates
+    if: needs.check-updates.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: windows-latest
     steps:
       - name: Clone Luau repository
         run: |
-          git clone https://github.com/Roblox/luau.git luau-build
+          git clone https://github.com/luau-lang/luau.git luau-build
           cd luau-build
           git log -1 --oneline
 
@@ -159,11 +193,13 @@ jobs:
           path: artifacts/windows-x64/
 
   build-linux:
+    needs: check-updates
+    if: needs.check-updates.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Clone Luau repository
         run: |
-          git clone https://github.com/Roblox/luau.git luau-build
+          git clone https://github.com/luau-lang/luau.git luau-build
           cd luau-build
           git log -1 --oneline
 
@@ -293,6 +329,8 @@ jobs:
           path: artifacts/linux-x64/
 
   build-macos:
+    needs: check-updates
+    if: needs.check-updates.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: macos-latest
     strategy:
       matrix:
@@ -300,7 +338,7 @@ jobs:
     steps:
       - name: Clone Luau repository
         run: |
-          git clone https://github.com/Roblox/luau.git luau-build
+          git clone https://github.com/luau-lang/luau.git luau-build
           cd luau-build
           git log -1 --oneline
 
@@ -431,6 +469,8 @@ jobs:
           path: artifacts/macos-${{ matrix.arch }}/
 
   build-android:
+    needs: check-updates
+    if: needs.check-updates.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -438,7 +478,7 @@ jobs:
     steps:
       - name: Clone Luau repository
         run: |
-          git clone https://github.com/Roblox/luau.git luau-build
+          git clone https://github.com/luau-lang/luau.git luau-build
           cd luau-build
           git log -1 --oneline
 
@@ -559,6 +599,8 @@ jobs:
           path: artifacts/android-${{ matrix.abi }}/
 
   build-ios:
+    needs: check-updates
+    if: needs.check-updates.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: macos-latest
     strategy:
       matrix:
@@ -566,7 +608,7 @@ jobs:
     steps:
       - name: Clone Luau repository
         run: |
-          git clone https://github.com/Roblox/luau.git luau-build
+          git clone https://github.com/luau-lang/luau.git luau-build
           cd luau-build
           git log -1 --oneline
 
@@ -725,7 +767,8 @@ jobs:
           if-no-files-found: error
           
   create-release:
-    needs: [ build-windows, build-linux, build-macos, build-android, build-ios ]
+    needs: [ check-updates, build-windows, build-linux, build-macos, build-android, build-ios ]
+    if: needs.check-updates.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -864,4 +907,15 @@ jobs:
 
           # Push changes
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}"
+          git push origin main
+          
+      - name: Update last commit hash
+        if: needs.check-updates.outputs.should-build == 'true'
+        run: |
+          # Update the last commit hash file
+          echo "${{ needs.check-updates.outputs.latest-commit }}" > .last_luau_commit
+          
+          # Commit the updated hash
+          git add .last_luau_commit
+          git commit -m "Update last Luau commit hash to ${{ needs.check-updates.outputs.latest-commit }}"
           git push origin main
