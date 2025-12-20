@@ -277,7 +277,7 @@ build-linux:
           name: linux-x64-libs
           path: artifacts/linux-x64/
 
-  build-macos:
+build-macos:
     needs: check-updates
     if: needs.check-updates.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: macos-latest
@@ -417,7 +417,7 @@ build-linux:
           name: macos-${{ matrix.arch }}-libs
           path: artifacts/macos-${{ matrix.arch }}/
 
-  build-android:
+build-android:
     needs: check-updates
     if: needs.check-updates.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -547,7 +547,7 @@ build-linux:
           name: android-${{ matrix.abi }}-libs
           path: artifacts/android-${{ matrix.abi }}/
 
-  build-ios:
+build-ios:
     needs: check-updates
     if: needs.check-updates.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: macos-latest
@@ -715,7 +715,7 @@ build-linux:
           path: artifacts/ios-${{ matrix.sdk }}/
           if-no-files-found: error
           
-  create-release:
+create-release:
     needs: [ check-updates, build-windows, build-linux, build-macos, build-android, build-ios ]
     if: needs.check-updates.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: ubuntu-latest
