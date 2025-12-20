@@ -134,7 +134,6 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libisocline.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.CLI.lib.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.Config.a' if='HXCPP_ARM64' />
-            <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.EqSat.a' if='HXCPP_ARM64' />
 
             <!-- x86 (32-bit Intel) -->
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.VM.a' if='HXCPP_M32' />
