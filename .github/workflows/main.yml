@@ -163,33 +163,22 @@ jobs:
       - name: Collect and Ultra Compress Linux Libraries
         run: |
           mkdir -p artifacts/linux-x64/lib
+          # 使用 find 确保即使没有找到文件也不会导致脚本崩溃
           find luau-build/build-release -name "*.a" -exec cp {} artifacts/linux-x64/lib/ \;
           find luau-build/build-release -name "*.so" -exec cp {} artifacts/linux-x64/lib/ \; 2>/dev/null || true
-
-          wget https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz
-          tar -xf upx-4.2.2-amd64_linux.tar.xz
-          
-          compress_static_lib() {
-            local lib="$1"
-            local temp_dir=$(mktemp -d)
-            local lib_abs_path=$(realpath "$lib")
-            cd "$temp_dir"
-            ar x "$lib_abs_path"
-            for obj in *.o; do
-              strip --strip-unneeded "$obj" 2>/dev/null || true
-              ../../upx-4.2.2-amd64_linux/upx --best --lzma --brute "$obj" 2>/dev/null || true
+      
+          # 修复 strip 报错：先检查文件是否存在
+          if [ -d "artifacts/linux-x64/lib" ]; then
+            # 处理静态库 .a
+            find artifacts/linux-x64/lib/ -name "*.a" -exec strip --strip-debug {} \;
+            
+            # 处理动态库 .so (只有存在时才处理)
+            shopt -s nullglob # 开启 nullglob，如果没有匹配到文件，变量为空而不是保留通配符
+            for lib in artifacts/linux-x64/lib/*.so; do
+              strip --strip-unneeded "$lib"
+              ./upx-4.2.2-amd64_linux/upx --best --lzma --brute "$lib" || true
             done
-            rm -f "$lib_abs_path"
-            ar rcs "$lib_abs_path" *.o
-            ../../upx-4.2.2-amd64_linux/upx --best --lzma --brute "$lib_abs_path" 2>/dev/null || true
-            cd -
-          }
-
-          for lib in artifacts/linux-x64/lib/*.a; do compress_static_lib "$lib"; done
-          for lib in artifacts/linux-x64/lib/*.so; do
-            strip --strip-unneeded "$lib"
-            ./upx-4.2.2-amd64_linux/upx --best --lzma --brute "$lib" || true
-          done
+          fi
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
@@ -272,7 +261,6 @@ jobs:
 
   build-ios:
     needs: check-updates
-    if: needs.check-updates.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: macos-latest
     strategy:
       matrix:
@@ -280,28 +268,30 @@ jobs:
     steps:
       - name: Clone Luau repository
         run: git clone https://github.com/luau-lang/luau.git luau-build
-
+  
       - name: Build Luau (iOS ${{ matrix.sdk }})
         run: |
           cd luau-build
           mkdir build-ios
           cd build-ios
-          ARCH="arm64"
-          if [ "${{ matrix.sdk }}" = "iphonesimulator" ]; then ARCH="x86_64;arm64"; fi
+
+          if [ "${{ matrix.sdk }}" = "iphoneos" ]; then
+            ARCH="arm64"
+          else
+            ARCH="x86_64;arm64"
+          fi
+  
           cmake .. \
             -DCMAKE_SYSTEM_NAME=iOS \
             -DCMAKE_OSX_SYSROOT=${{ matrix.sdk }} \
             -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
-            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTING=OFF
-          cmake --build . --config Release -j$(sysctl -n hw.ncpu)
-
-      - name: Upload iOS Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-${{ matrix.sdk }}-libs
-          path: luau-build/build-ios/*.a
+            -DLUAU_BUILD_TESTS=OFF \
+            -DLUAU_BUILD_CLI=OFF \
+            -DLUAU_BUILD_WEB=OFF \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
+  
+          cmake --build . --config Release -j 2
 
   create-release:
     needs: [ check-updates, build-windows, build-linux, build-macos, build-android, build-ios ]
