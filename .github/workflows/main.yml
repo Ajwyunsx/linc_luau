@@ -5,7 +5,7 @@ permissions:
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # 每 30 分钟运行一次
+    - cron: '*/30 * * * *'
   workflow_dispatch:
   push:
     branches: [ main, master ]
@@ -64,12 +64,13 @@ jobs:
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
-          text = path.read_text()
-          if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
-              print("patched TypeChecker2.cpp")
-          else:
-              print("marker not found; skipping patch")
+          if path.exists():
+              text = path.read_text()
+              if marker in text:
+                  path.write_text(text.replace(marker, replacement, 1))
+                  print("patched TypeChecker2.cpp")
+              else:
+                  print("marker not found; skipping patch")
           PY
 
       - name: Setup MSVC
@@ -98,23 +99,19 @@ jobs:
           mkdir -p artifacts/windows-x64/lib
           Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/
           
-          # 仅当存在 DLL 时才处理 DLL
           if (Test-Path "luau-build/build-release/Release/*.dll") {
             Copy-Item luau-build/build-release/Release/*.dll artifacts/windows-x64/lib/
             $upxPath = Join-Path $PWD "upx.exe"
             Get-ChildItem artifacts/windows-x64/lib -Filter "*.dll" | ForEach-Object {
-              # DLL 可以安全地进行 strip 和 upx
               & $upxPath --best $_.FullName
             }
           }
 
-          # 对于静态库 (.lib)，不要使用 strip 或 upx
-          # 如果文件超过 90MB，使用 7z 压缩，用户下载后需自行解压
           Get-ChildItem artifacts/windows-x64/lib -Filter "*.lib" | ForEach-Object {
             if ($_.Length -gt 90MB) {
-              Write-Host "正在压缩超大静态库: $($_.Name)"
+              Write-Host "Compressing large static lib: $($_.Name)"
               & 7z a -t7z -mx=9 "$($_.FullName).7z" $($_.FullName)
-              Remove-Item $($_.FullName) # 移除原文件，只保留 .7z
+              Remove-Item $($_.FullName)
             }
           }
           
@@ -130,9 +127,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Clone Luau repository
-        run: |
-          git clone https://github.com/luau-lang/luau.git luau-build
-          cd luau-build
+        run: git clone https://github.com/luau-lang/luau.git luau-build
 
       - name: Patch Luau TypeChecker warning
         run: |
@@ -142,9 +137,10 @@ jobs:
           path = Path("Analysis/src/TypeChecker2.cpp")
           marker = "lookupAnnotation(ref->parameters.data 0 .type)"
           replacement = "lookupAnnotation(ann)"
-          text = path.read_text()
-          if marker in text:
-              path.write_text(text.replace(marker, replacement, 1))
+          if path.exists():
+              text = path.read_text()
+              if marker in text:
+                  path.write_text(text.replace(marker, replacement, 1))
           PY
 
       - name: Install dependencies
@@ -163,20 +159,16 @@ jobs:
       - name: Collect and Ultra Compress Linux Libraries
         run: |
           mkdir -p artifacts/linux-x64/lib
-          # 使用 find 确保即使没有找到文件也不会导致脚本崩溃
           find luau-build/build-release -name "*.a" -exec cp {} artifacts/linux-x64/lib/ \;
           find luau-build/build-release -name "*.so" -exec cp {} artifacts/linux-x64/lib/ \; 2>/dev/null || true
-      
-          # 修复 strip 报错：先检查文件是否存在
+          
           if [ -d "artifacts/linux-x64/lib" ]; then
-            # 处理静态库 .a
+            # Strip debug symbols from static libs to reduce size
             find artifacts/linux-x64/lib/ -name "*.a" -exec strip --strip-debug {} \;
             
-            # 处理动态库 .so (只有存在时才处理)
-            shopt -s nullglob # 开启 nullglob，如果没有匹配到文件，变量为空而不是保留通配符
+            shopt -s nullglob
             for lib in artifacts/linux-x64/lib/*.so; do
               strip --strip-unneeded "$lib"
-              ./upx-4.2.2-amd64_linux/upx --best --lzma --brute "$lib" || true
             done
           fi
 
@@ -207,13 +199,12 @@ jobs:
 
       - name: Collect and Compress macOS Libraries
         run: |
-          brew install upx p7zip
           mkdir -p artifacts/macos-${{ matrix.arch }}/lib
           find luau-build/build-release-${{ matrix.arch }} -name "*.a" -exec cp {} artifacts/macos-${{ matrix.arch }}/lib/ \;
           
+          # Strip debug info to reduce size
           for lib in artifacts/macos-${{ matrix.arch }}/lib/*.a; do
-            strip -S -x "$lib"
-            upx --best "$lib" 2>/dev/null || true
+            strip -S "$lib"
           done
 
       - name: Upload macOS Artifacts
@@ -252,6 +243,11 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=OFF
           cmake --build . --config Release -j$(nproc)
+          
+          # IMPORTANT: Strip debug symbols to fix 177MB file size issue
+          echo "Stripping binaries..."
+          TOOLCHAIN_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          find . -name "*.a" -exec "$TOOLCHAIN_BIN/llvm-strip" --strip-debug {} \;
 
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4
@@ -292,6 +288,15 @@ jobs:
             -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
   
           cmake --build . --config Release -j 2
+          
+          # Strip debug info
+          find . -name "*.a" -exec strip -S {} \;
+      
+      - name: Upload iOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-${{ matrix.sdk }}-libs
+          path: luau-build/build-ios/*.a
 
   create-release:
     needs: [ check-updates, build-windows, build-linux, build-macos, build-android, build-ios ]
@@ -313,15 +318,56 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          mkdir -p lib/luau/lib
-          # 示例：移动并整理目录逻辑... (根据你的需求 cp)
-          # 快速合并所有下载的库到最终目录
-          cp -r all-artifacts/**/* lib/luau/lib/ || true
+          # Define base directory
+          BASE_LIB="lib/luau/lib"
           
-          git add lib/luau/lib
+          # Clean old libraries to ensure we don't have stale files
+          rm -rf $BASE_LIB
+          mkdir -p $BASE_LIB
+
+          # --- Windows ---
+          mkdir -p $BASE_LIB/windows/x64
+          cp all-artifacts/windows-x64-libs/* $BASE_LIB/windows/x64/ 2>/dev/null || true
+
+          # --- Linux ---
+          mkdir -p $BASE_LIB/linux/x64
+          cp all-artifacts/linux-x64-libs/* $BASE_LIB/linux/x64/ 2>/dev/null || true
+
+          # --- macOS ---
+          mkdir -p $BASE_LIB/macos/x86_64
+          cp all-artifacts/macos-x86_64-libs/* $BASE_LIB/macos/x86_64/ 2>/dev/null || true
+          mkdir -p $BASE_LIB/macos/arm64
+          cp all-artifacts/macos-arm64-libs/* $BASE_LIB/macos/arm64/ 2>/dev/null || true
+
+          # --- Android ---
+          mkdir -p $BASE_LIB/android/armv7
+          cp all-artifacts/android-armv7-libs/*.a $BASE_LIB/android/armv7/ 2>/dev/null || true
+          
+          mkdir -p $BASE_LIB/android/arm64
+          cp all-artifacts/android-arm64-v8a-libs/*.a $BASE_LIB/android/arm64/ 2>/dev/null || true
+          
+          mkdir -p $BASE_LIB/android/x86
+          cp all-artifacts/android-x86-libs/*.a $BASE_LIB/android/x86/ 2>/dev/null || true
+          
+          mkdir -p $BASE_LIB/android/x64
+          cp all-artifacts/android-x86_64-libs/*.a $BASE_LIB/android/x64/ 2>/dev/null || true
+
+          # --- iOS ---
+          mkdir -p $BASE_LIB/ios/iphoneos
+          cp all-artifacts/ios-iphoneos-libs/*.a $BASE_LIB/ios/iphoneos/ 2>/dev/null || true
+          
+          mkdir -p $BASE_LIB/ios/iphonesimulator
+          cp all-artifacts/ios-iphonesimulator-libs/*.a $BASE_LIB/ios/iphonesimulator/ 2>/dev/null || true
+
+          # Commit and Push
+          git add $BASE_LIB
+          
+          # Check if there are changes before committing
           if ! git diff --cached --quiet; then
             git commit -m "Update prebuilt Luau libraries: ${{ needs.check-updates.outputs.latest-commit }}"
             git push origin main
+          else
+            echo "No changes to commit."
           fi
 
       - name: Update last commit hash
