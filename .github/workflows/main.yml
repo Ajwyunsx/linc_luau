@@ -73,6 +73,25 @@ jobs:
                   print("marker not found; skipping patch")
           PY
 
+      - name: Patch Luau CMakeLists MSVC guard
+        shell: bash
+        run: |
+          cd luau-build
+          # 上游 CMakeLists 在 "if(MSVC AND LUAU_BUILD_CLI)" 块里引用了 Luau.UnitTest，
+          # 但该目标只在 LUAU_BUILD_TESTS=ON 时存在，会导致 MSVC 配置阶段报错。
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("CMakeLists.txt")
+          marker = "if(MSVC AND LUAU_BUILD_CLI)"
+          replacement = "if(MSVC AND LUAU_BUILD_CLI AND LUAU_BUILD_TESTS)"
+          text = path.read_text()
+          if marker in text:
+              path.write_text(text.replace(marker, replacement, 1))
+              print("patched CMakeLists.txt MSVC/CLI guard")
+          else:
+              print("marker not found; skipping patch")
+          PY
+
       - name: Setup MSVC
         uses: microsoft/setup-msbuild@v2
 
