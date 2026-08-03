@@ -118,6 +118,10 @@ jobs:
           mkdir -p artifacts/windows-x64/lib
           Copy-Item luau-build/build-release/Release/*.lib artifacts/windows-x64/lib/
           
+          # linc_lua.xml 只链接 VM/Common/Ast/Compiler/CodeGen 五个库；
+          # Luau.Analysis（类型检查器）体积超过 GitHub 100MB 推送上限且运行时用不到，直接排除。
+          Remove-Item artifacts/windows-x64/lib/Luau.Analysis.lib -ErrorAction SilentlyContinue
+          
           if (Test-Path "luau-build/build-release/Release/*.dll") {
             Copy-Item luau-build/build-release/Release/*.dll artifacts/windows-x64/lib/
             $upxPath = Join-Path $PWD "upx.exe"
