@@ -107,11 +107,12 @@ jobs:
             }
           }
 
+          # NOTE: 不要在这里把 >90MB 的 .lib 换成 .7z —— linc_lua.xml 链接时需要原始 .lib。
+          # GitHub 单文件推送上限为 100MB，这里对超限文件直接报错，避免静默丢失。
           Get-ChildItem artifacts/windows-x64/lib -Filter "*.lib" | ForEach-Object {
-            if ($_.Length -gt 90MB) {
-              Write-Host "Compressing large static lib: $($_.Name)"
-              & 7z a -t7z -mx=9 "$($_.FullName).7z" $($_.FullName)
-              Remove-Item $($_.FullName)
+            Write-Host ("{0}  {1:N1} MB" -f $_.Name, ($_.Length / 1MB))
+            if ($_.Length -gt 100MB) {
+              throw "Static lib exceeds GitHub 100MB push limit: $($_.Name)"
             }
           }
           
@@ -300,7 +301,7 @@ jobs:
 
   create-release:
     needs: [ check-updates, build-windows, build-linux, build-macos, build-android, build-ios ]
-    if: always() && (needs.check-updates.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch')
+    if: always() && (needs.check-updates.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -310,6 +311,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: all-artifacts
+
+      - name: Show downloaded artifacts
+        run: |
+          echo "=== Downloaded artifacts ==="
+          find all-artifacts -type f | sort || true
 
       - name: Prepare and Push Libraries
         env:
@@ -325,47 +331,86 @@ jobs:
           rm -rf $BASE_LIB
           mkdir -p $BASE_LIB
 
-          # --- Windows ---
-          mkdir -p $BASE_LIB/windows/x64
-          cp all-artifacts/windows-x64-libs/* $BASE_LIB/windows/x64/ 2>/dev/null || true
+          # NOTE: output layout must match linc/linc_lua.xml expectations:
+          #   windows-x64/lib/*.lib, linux-x64/lib/*.a, macos-x64|macos-arm64/lib/*.a,
+          #   android/<armv7|arm64-v8a|x86|x86_64>/lib/*.a,
+          #   ios/lib/libLuau.*.iphoneos-64.a / libLuau.*.iphonesim-64.a
 
-          # --- Linux ---
-          mkdir -p $BASE_LIB/linux/x64
-          cp all-artifacts/linux-x64-libs/* $BASE_LIB/linux/x64/ 2>/dev/null || true
+          # --- Windows (artifact dir contains a lib/ subfolder) ---
+          mkdir -p $BASE_LIB/windows-x64/lib
+          cp -r all-artifacts/windows-x64-libs/lib/* $BASE_LIB/windows-x64/lib/ 2>/dev/null || true
+
+          # --- Linux (artifact dir contains a lib/ subfolder) ---
+          mkdir -p $BASE_LIB/linux-x64/lib
+          cp -r all-artifacts/linux-x64-libs/lib/* $BASE_LIB/linux-x64/lib/ 2>/dev/null || true
 
           # --- macOS ---
-          mkdir -p $BASE_LIB/macos/x86_64
-          cp all-artifacts/macos-x86_64-libs/* $BASE_LIB/macos/x86_64/ 2>/dev/null || true
-          mkdir -p $BASE_LIB/macos/arm64
-          cp all-artifacts/macos-arm64-libs/* $BASE_LIB/macos/arm64/ 2>/dev/null || true
+          mkdir -p $BASE_LIB/macos-x64/lib
+          cp -r all-artifacts/macos-x86_64-libs/lib/* $BASE_LIB/macos-x64/lib/ 2>/dev/null || true
+          mkdir -p $BASE_LIB/macos-arm64/lib
+          cp -r all-artifacts/macos-arm64-libs/lib/* $BASE_LIB/macos-arm64/lib/ 2>/dev/null || true
 
-          # --- Android ---
-          mkdir -p $BASE_LIB/android/armv7
-          cp all-artifacts/android-armv7-libs/*.a $BASE_LIB/android/armv7/ 2>/dev/null || true
+          # --- Android (artifacts are flat *.a, XML expects a lib/ subfolder) ---
+          mkdir -p $BASE_LIB/android/armv7/lib
+          cp all-artifacts/android-armv7-libs/*.a $BASE_LIB/android/armv7/lib/ 2>/dev/null || true
           
-          mkdir -p $BASE_LIB/android/arm64
-          cp all-artifacts/android-arm64-v8a-libs/*.a $BASE_LIB/android/arm64/ 2>/dev/null || true
+          mkdir -p $BASE_LIB/android/arm64-v8a/lib
+          cp all-artifacts/android-arm64-v8a-libs/*.a $BASE_LIB/android/arm64-v8a/lib/ 2>/dev/null || true
           
-          mkdir -p $BASE_LIB/android/x86
-          cp all-artifacts/android-x86-libs/*.a $BASE_LIB/android/x86/ 2>/dev/null || true
+          mkdir -p $BASE_LIB/android/x86/lib
+          cp all-artifacts/android-x86-libs/*.a $BASE_LIB/android/x86/lib/ 2>/dev/null || true
           
-          mkdir -p $BASE_LIB/android/x64
-          cp all-artifacts/android-x86_64-libs/*.a $BASE_LIB/android/x64/ 2>/dev/null || true
+          mkdir -p $BASE_LIB/android/x86_64/lib
+          cp all-artifacts/android-x86_64-libs/*.a $BASE_LIB/android/x86_64/lib/ 2>/dev/null || true
 
-          # --- iOS ---
-          mkdir -p $BASE_LIB/ios/iphoneos
-          cp all-artifacts/ios-iphoneos-libs/*.a $BASE_LIB/ios/iphoneos/ 2>/dev/null || true
-          
-          mkdir -p $BASE_LIB/ios/iphonesimulator
-          cp all-artifacts/ios-iphonesimulator-libs/*.a $BASE_LIB/ios/iphonesimulator/ 2>/dev/null || true
+          # --- iOS (XML expects flattened sdk-suffixed names: libLuau.VM.iphoneos-64.a) ---
+          mkdir -p $BASE_LIB/ios/lib
+          for f in all-artifacts/ios-iphoneos-libs/libLuau.*.a; do
+            [ -e "$f" ] || continue
+            base=$(basename "$f" .a)
+            cp "$f" "$BASE_LIB/ios/lib/${base}.iphoneos-64.a"
+          done
+          for f in all-artifacts/ios-iphonesimulator-libs/libLuau.*.a; do
+            [ -e "$f" ] || continue
+            base=$(basename "$f" .a)
+            cp "$f" "$BASE_LIB/ios/lib/${base}.iphonesim-64.a"
+          done
+
+          echo "=== Final library tree ==="
+          find $BASE_LIB -type f | sort
+
+          # --- Verify: artifact 存在但目标目录为空时直接失败，避免静默丢失桌面端库 ---
+          verify() {
+            local artifact_dir="$1" dest_dir="$2" label="$3"
+            if [ -d "$artifact_dir" ] && [ -n "$(find "$artifact_dir" -type f \( -name '*.a' -o -name '*.lib' \) -print -quit 2>/dev/null)" ]; then
+              if [ -z "$(find "$dest_dir" -type f \( -name '*.a' -o -name '*.lib' \) -print -quit 2>/dev/null)" ]; then
+                echo "::error::$label artifacts were produced but no libs were copied into $dest_dir"
+                exit 1
+              fi
+              echo "OK: $label -> $dest_dir"
+            else
+              echo "::warning::No $label artifacts found (build job skipped or failed?)"
+            fi
+          }
+          verify all-artifacts/windows-x64-libs        $BASE_LIB/windows-x64/lib        "Windows x64"
+          verify all-artifacts/linux-x64-libs          $BASE_LIB/linux-x64/lib          "Linux x64"
+          verify all-artifacts/macos-x86_64-libs       $BASE_LIB/macos-x64/lib          "macOS x64"
+          verify all-artifacts/macos-arm64-libs        $BASE_LIB/macos-arm64/lib        "macOS arm64"
+          verify all-artifacts/android-armv7-libs      $BASE_LIB/android/armv7/lib      "Android armv7"
+          verify all-artifacts/android-arm64-v8a-libs  $BASE_LIB/android/arm64-v8a/lib  "Android arm64-v8a"
+          verify all-artifacts/android-x86-libs        $BASE_LIB/android/x86/lib        "Android x86"
+          verify all-artifacts/android-x86_64-libs     $BASE_LIB/android/x86_64/lib     "Android x86_64"
+          verify all-artifacts/ios-iphoneos-libs       $BASE_LIB/ios/lib                "iOS iphoneos"
+          verify all-artifacts/ios-iphonesimulator-libs $BASE_LIB/ios/lib               "iOS iphonesimulator"
 
           # Commit and Push
-          git add $BASE_LIB
+          git add -f $BASE_LIB
           
           # Check if there are changes before committing
           if ! git diff --cached --quiet; then
             git commit -m "Update prebuilt Luau libraries: ${{ needs.check-updates.outputs.latest-commit }}"
-            git push origin main
+            git pull --rebase origin main || true
+            git push origin HEAD:main
           else
             echo "No changes to commit."
           fi
@@ -375,4 +420,5 @@ jobs:
           echo "${{ needs.check-updates.outputs.latest-commit }}" > .last_luau_commit
           git add .last_luau_commit
           git commit -m "chore: update sync hash" || true
-          git push origin main || true
+          git pull --rebase origin main || true
+          git push origin HEAD:main || true
