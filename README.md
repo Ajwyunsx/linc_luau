@@ -20,8 +20,8 @@ This library works with the Haxe cpp target only.
 
 See test/Test.hx
 
-Be sure to read the Lua documentation  
-www.lua.org/manual/5.1/manual.html  
+Be sure to read the Luau documentation
+www.luau.org/getting-started/ 
 
 ```haxe
 import llua.Lua;
