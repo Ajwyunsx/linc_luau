@@ -21,7 +21,7 @@ This library works with the Haxe cpp target only.
 See test/Test.hx
 
 Be sure to read the Luau documentation
-www.luau.org/getting-started/ 
+luau.org/getting-started/ 
 
 ```haxe
 import llua.Lua;
