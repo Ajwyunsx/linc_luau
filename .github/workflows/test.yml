@@ -1,0 +1,44 @@
+name: Test (hxcpp)
+
+on:
+  push:
+    branches: [ main, master ]
+    paths-ignore:
+      - 'lib/luau/lib/**'
+      - '.github/workflows/main.yml'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test-hxcpp:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Haxe
+        uses: krdlab/setup-haxe@v1
+        with:
+          haxe-version: 4.3.4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Setup haxelib
+        run: |
+          mkdir -p ~/haxelib
+          haxelib setup ~/haxelib
+          haxelib install hxcpp --quiet
+
+      - name: Register local linc_luau library
+        run: haxelib dev linc_luau $GITHUB_WORKSPACE
+
+      - name: Build test with hxcpp
+        run: haxe build.hxml -D linux -D HXCPP_M64
+        working-directory: test
+
+      - name: Run test binary
+        run: ./test/cpp/Test
