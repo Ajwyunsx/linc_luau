@@ -46,6 +46,7 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-x64/lib/Luau.Common.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-x64/lib/Luau.Ast.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-x64/lib/Luau.Compiler.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-x64/lib/Luau.Bytecode.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-x64/lib/Luau.CodeGen.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
 
             <!-- Windows arm64 (if you later add windows-arm64 artifacts) -->
@@ -134,7 +135,6 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libisocline.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.CLI.lib.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.Config.a' if='HXCPP_ARM64' />
-            <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.EqSat.a' if='HXCPP_ARM64' />
 
             <!-- x86 (32-bit Intel) -->
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.VM.a' if='HXCPP_M32' />
@@ -190,6 +190,7 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-x64/lib/Luau.Common.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-x64/lib/Luau.Ast.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-x64/lib/Luau.Compiler.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-x64/lib/Luau.Bytecode.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-x64/lib/Luau.CodeGen.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             
             <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-arm64/lib/Luau.VM.lib' if='HXCPP_ARM64' />

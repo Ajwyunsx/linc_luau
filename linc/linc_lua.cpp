@@ -138,7 +138,9 @@ namespace linc {
 
     } //luau
 
-    extern "C" int luaL_dostring(lua_State* L, const char* s) {
+} //linc
+
+    int luaL_dostring(lua_State* L, const char* s) {
         size_t sourceLength = strlen(s);
         const char* processedSource = linc::luau::skipBOM(s, sourceLength);
         
@@ -154,7 +156,7 @@ namespace linc {
         return lua_pcall(L, 0, LUA_MULTRET, 0);
     }
 
-    extern "C" int luaL_dofile(lua_State* L, const char* filename) {
+    int luaL_dofile(lua_State* L, const char* filename) {
         std::ifstream ifs(filename, std::ios::binary);
         if (!ifs) { lua_pushfstring(L, "cannot open %s", filename); return LUA_ERRERR; }
         std::string src((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
@@ -174,6 +176,8 @@ namespace linc {
         if (r != 0) return r;
         return lua_pcall(L, 0, LUA_MULTRET, 0);
     }
+
+namespace linc {
 
     namespace lual {
 
