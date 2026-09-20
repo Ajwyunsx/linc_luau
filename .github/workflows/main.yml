@@ -100,7 +100,10 @@ jobs:
           cd luau-build
           mkdir build-release
           cd build-release
-          cmake .. -DCMAKE_BUILD_TYPE=Release -A x64 -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF
+          # 引擎 (hxcpp) 在 Windows 上用静态 CRT (/MT) 编译，Luau 预编译库必须同为 /MT。
+          # 否则链接时报 LNK2038 RuntimeLibrary 'MD_DynamicRelease' 与 'MT_StaticRelease'
+          # 不匹配，并连带出一堆 __imp_round/__imp_modf/__imp_strspn 未解析符号。
+          cmake .. -DCMAKE_BUILD_TYPE=Release -A x64 -DBUILD_TESTING=OFF -DLUAU_BUILD_TESTS=OFF -DLUAU_STATIC_CRT=ON
           cmake --build . --config Release
 
       - name: Setup LLVM and Compression Tools
