@@ -1,5 +1,12 @@
 # linc/Luau
-Haxe/hxcpp @:native bindings for [Luau](https://github.com/luau-lang/luau).
+
+<p>
+  <img src="luau-logo.svg" alt="Luau" width="48" align="left" />
+
+  [![Roblox Luau](https://img.shields.io/badge/Roblox-Luau-00A2FF?logo=roblox&logoColor=white)](https://luau-lang.org)
+
+  Haxe/hxcpp @:native bindings for [Luau](https://github.com/luau-lang/luau).
+</p>
 
 This is a [linc](http://snowkit.github.io/linc/) library.
 
@@ -13,8 +20,8 @@ This library works with the Haxe cpp target only.
 
 See test/Test.hx
 
-Be sure to read the Lua documentation  
-www.lua.org/manual/5.1/manual.html  
+Be sure to read the Luau documentation
+[this](https://luau.org/getting-started/) 
 
 ```haxe
 import llua.Lua;
