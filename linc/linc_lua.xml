@@ -91,6 +91,7 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-x64/lib/libLuau.Common.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-x64/lib/libLuau.Ast.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-x64/lib/libLuau.Compiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-x64/lib/libLuau.Bytecode.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-x64/lib/libLuau.CodeGen.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
 
             <!-- Linux arm64 -->
@@ -107,12 +108,14 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-x64/lib/libLuau.Common.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-x64/lib/libLuau.Ast.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-x64/lib/libLuau.Compiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-x64/lib/libLuau.Bytecode.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-x64/lib/libLuau.CodeGen.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.VM.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.Common.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.Ast.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.Bytecode.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.CodeGen.a' if='HXCPP_ARM64' />
         </section>
 
@@ -123,6 +126,7 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/armv7/lib/libLuau.Common.a' if='HXCPP_ARMV7' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/armv7/lib/libLuau.Ast.a' if='HXCPP_ARMV7' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/armv7/lib/libLuau.Compiler.a' if='HXCPP_ARMV7' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/android/armv7/lib/libLuau.Bytecode.a' if='HXCPP_ARMV7' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/armv7/lib/libLuau.CodeGen.a' if='HXCPP_ARMV7' />
 
             <!-- arm64-v8a (64-bit ARM) -->
@@ -130,6 +134,7 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.Common.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.Ast.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.Bytecode.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.CodeGen.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.Require.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libisocline.a' if='HXCPP_ARM64' />
@@ -141,6 +146,7 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.Common.a' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.Ast.a' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.Compiler.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.Bytecode.a' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.CodeGen.a' if='HXCPP_M32' />
 
             <!-- x86_64 (64-bit Intel) -->
@@ -148,6 +154,7 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.Common.a' if='HXCPP_M64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.Ast.a' if='HXCPP_M64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.Compiler.a' if='HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.Bytecode.a' if='HXCPP_M64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.CodeGen.a' if='HXCPP_M64' />
 
             <!--
@@ -170,6 +177,7 @@
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Common.iphoneos-64.a' if='HXCPP_ARM64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Ast.iphoneos-64.a' if='HXCPP_ARM64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Compiler.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Bytecode.iphoneos-64.a' if='HXCPP_ARM64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.CodeGen.iphoneos-64.a' if='HXCPP_ARM64' />
             </section>
             <section if="iphonesim">
@@ -177,6 +185,7 @@
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Common.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Ast.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Compiler.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+                <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Bytecode.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.CodeGen.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
             </section>
         </section>
@@ -233,6 +242,7 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-x64/lib/libLuau.Common.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-x64/lib/libLuau.Ast.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-x64/lib/libLuau.Compiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-x64/lib/libLuau.Bytecode.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-x64/lib/libLuau.CodeGen.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             
             <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-arm64/lib/libLuau.VM.a' if='HXCPP_ARM64' />
@@ -248,12 +258,14 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-x64/lib/libLuau.Common.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-x64/lib/libLuau.Ast.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-x64/lib/libLuau.Compiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-x64/lib/libLuau.Bytecode.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-x64/lib/libLuau.CodeGen.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.VM.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.Common.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.Ast.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.Bytecode.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.CodeGen.a' if='HXCPP_ARM64' />
         </section>
 
@@ -263,24 +275,28 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/armv7/lib/libLuau.Common.a' if='HXCPP_ARMV7' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/armv7/lib/libLuau.Ast.a' if='HXCPP_ARMV7' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/armv7/lib/libLuau.Compiler.a' if='HXCPP_ARMV7' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/android/armv7/lib/libLuau.Bytecode.a' if='HXCPP_ARMV7' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/armv7/lib/libLuau.CodeGen.a' if='HXCPP_ARMV7' />
             
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.VM.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.Common.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.Ast.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.Bytecode.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.CodeGen.a' if='HXCPP_ARM64' />
             
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.VM.a' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.Common.a' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.Ast.a' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.Compiler.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.Bytecode.a' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.CodeGen.a' if='HXCPP_M32' />
             
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.VM.a' if='HXCPP_M64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.Common.a' if='HXCPP_M64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.Ast.a' if='HXCPP_M64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.Compiler.a' if='HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.Bytecode.a' if='HXCPP_M64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.CodeGen.a' if='HXCPP_M64' />
         </section>
 
@@ -291,6 +307,7 @@
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Common.iphoneos-64.a' if='HXCPP_ARM64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Ast.iphoneos-64.a' if='HXCPP_ARM64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Compiler.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Bytecode.iphoneos-64.a' if='HXCPP_ARM64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.CodeGen.iphoneos-64.a' if='HXCPP_ARM64' />
             </section>
             <section if="iphonesim">
@@ -298,6 +315,7 @@
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Common.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Ast.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Compiler.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+                <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Bytecode.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.CodeGen.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
             </section>
         </section>
@@ -311,6 +329,7 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-x64/lib/Luau.Common.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-x64/lib/Luau.Ast.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-x64/lib/Luau.Compiler.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-x64/lib/Luau.Bytecode.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-x64/lib/Luau.CodeGen.lib' if='HXCPP_M64' unless='HXCPP_ARM64' />
             
             <lib name='${LINC_LUA_PATH}lib/luau/lib/windows-arm64/lib/Luau.VM.lib' if='HXCPP_ARM64' />
@@ -353,6 +372,7 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-x64/lib/libLuau.Common.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-x64/lib/libLuau.Ast.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-x64/lib/libLuau.Compiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-x64/lib/libLuau.Bytecode.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-x64/lib/libLuau.CodeGen.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             
             <lib name='${LINC_LUA_PATH}lib/luau/lib/linux-arm64/lib/libLuau.VM.a' if='HXCPP_ARM64' />
@@ -368,12 +388,14 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-x64/lib/libLuau.Common.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-x64/lib/libLuau.Ast.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-x64/lib/libLuau.Compiler.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-x64/lib/libLuau.Bytecode.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-x64/lib/libLuau.CodeGen.a' if='HXCPP_M64' unless='HXCPP_ARM64' />
             
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.VM.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.Common.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.Ast.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.Bytecode.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/macos-arm64/lib/libLuau.CodeGen.a' if='HXCPP_ARM64' />
         </section>
 
@@ -383,24 +405,28 @@
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/armv7/lib/libLuau.Common.a' if='HXCPP_ARMV7' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/armv7/lib/libLuau.Ast.a' if='HXCPP_ARMV7' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/armv7/lib/libLuau.Compiler.a' if='HXCPP_ARMV7' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/android/armv7/lib/libLuau.Bytecode.a' if='HXCPP_ARMV7' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/armv7/lib/libLuau.CodeGen.a' if='HXCPP_ARMV7' />
             
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.VM.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.Common.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.Ast.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.Compiler.a' if='HXCPP_ARM64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.Bytecode.a' if='HXCPP_ARM64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/arm64-v8a/lib/libLuau.CodeGen.a' if='HXCPP_ARM64' />
             
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.VM.a' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.Common.a' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.Ast.a' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.Compiler.a' if='HXCPP_M32' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.Bytecode.a' if='HXCPP_M32' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86/lib/libLuau.CodeGen.a' if='HXCPP_M32' />
             
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.VM.a' if='HXCPP_M64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.Common.a' if='HXCPP_M64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.Ast.a' if='HXCPP_M64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.Compiler.a' if='HXCPP_M64' />
+            <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.Bytecode.a' if='HXCPP_M64' />
             <lib name='${LINC_LUA_PATH}lib/luau/lib/android/x86_64/lib/libLuau.CodeGen.a' if='HXCPP_M64' />
         </section>
 
@@ -411,6 +437,7 @@
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Common.iphoneos-64.a' if='HXCPP_ARM64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Ast.iphoneos-64.a' if='HXCPP_ARM64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Compiler.iphoneos-64.a' if='HXCPP_ARM64' />
+                <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Bytecode.iphoneos-64.a' if='HXCPP_ARM64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.CodeGen.iphoneos-64.a' if='HXCPP_ARM64' />
             </section>
             <section if="iphonesim">
@@ -418,6 +445,7 @@
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Common.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Ast.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Compiler.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
+                <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.Bytecode.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
                 <lib name='${LINC_LUA_PATH}lib/luau/lib/ios/lib/libLuau.CodeGen.iphonesim-64.a' if='HXCPP_ARM64 || HXCPP_M64' />
             </section>
         </section>
