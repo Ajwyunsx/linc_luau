@@ -1,0 +1,49 @@
+name: Test Haxe Bindings
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'llua/**'
+      - 'linc/**'
+      - 'lib/luau/**/include/**'
+      - 'test/**'
+      - '.github/workflows/test.yml'
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Haxe
+        uses: krdlab/setup-haxe@v1
+        with:
+          haxe-version: '4.3.7'
+
+      - name: Setup hxcpp and local library
+        run: |
+          haxelib --always install hxcpp
+          haxelib dev linc_luau "$GITHUB_WORKSPACE"
+
+      - name: Build and run basic execution test
+        run: |
+          haxe -lib linc_luau -cp . -cp test -main Test -cpp .cloud-test/basic
+          ./.cloud-test/basic/Test
+
+      - name: Build and run helper and conversion test
+        run: |
+          haxe -lib linc_luau -cp . -cp test -main LuaHelperTest -cpp .cloud-test/helper
+          ./.cloud-test/helper/LuaHelperTest
+
+      - name: Build and run callback demo
+        run: |
+          haxe -lib linc_luau -cp . -cp test -main CallbackDemo -cpp .cloud-test/callback-demo
+          ./.cloud-test/callback-demo/CallbackDemo
+
+      - name: Build and run full callback test
+        run: |
+          haxe -lib linc_luau -cp . -cp test -main FullCallbackTest -cpp .cloud-test/full-callback
+          ./.cloud-test/full-callback/FullCallbackTest
