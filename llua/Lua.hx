@@ -46,13 +46,16 @@ extern class Lua {
 	public static inline var LUA_TBOOLEAN:Int        = 1;
 	public static inline var LUA_TLIGHTUSERDATA:Int  = 2;
 	public static inline var LUA_TNUMBER:Int         = 3;
-	public static inline var LUA_TVECTOR:Int         = 4;  // Luau extension
-	public static inline var LUA_TSTRING:Int         = 5;
-	public static inline var LUA_TTABLE:Int          = 6;
-	public static inline var LUA_TFUNCTION:Int       = 7;
-	public static inline var LUA_TUSERDATA:Int       = 8;
-	public static inline var LUA_TTHREAD:Int         = 9;
-	public static inline var LUA_TBUFFER:Int         = 10; // Luau extension
+	public static inline var LUA_TINTEGER:Int        = 4;
+	public static inline var LUA_TVECTOR:Int         = 5;
+	public static inline var LUA_TSTRING:Int         = 6;
+	public static inline var LUA_TTABLE:Int          = 7;
+	public static inline var LUA_TFUNCTION:Int       = 8;
+	public static inline var LUA_TUSERDATA:Int       = 9;
+	public static inline var LUA_TTHREAD:Int         = 10;
+	public static inline var LUA_TBUFFER:Int         = 11;
+	public static inline var LUA_TCLASS:Int          = 12;
+	public static inline var LUA_TOBJECT:Int         = 13;
 
 
 	/* minimum Lua stack available to a C function */
@@ -485,7 +488,7 @@ extern class Lua {
 	static function ref(l:State, lock:Bool) : Int;
 
 	@:native('lua_unref')
-	static function unref(l:State, ref:Int) : Void;
+	static function unref(l:State, ref:Int) : Int;
 
 	@:native('lua_getref')
 	static function getref(l:State, ref:Int) : Void;

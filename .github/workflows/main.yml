@@ -333,6 +333,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Sync Luau public headers
+        run: |
+          git clone --filter=blob:none https://github.com/luau-lang/luau.git luau-headers
+          git -C luau-headers checkout "${{ needs.check-updates.outputs.latest-commit }}"
+          for header in \
+            VM/include/lua.h \
+            VM/include/lualib.h \
+            VM/include/luaconf.h \
+            Compiler/include/luacode.h \
+            Compiler/include/Luau/Compiler.h \
+            Compiler/include/Luau/BytecodeBuilder.h
+          do
+            if [ -f "luau-headers/$header" ]; then
+              mkdir -p "lib/luau/$(dirname "$header")"
+              cp "luau-headers/$header" "lib/luau/$header"
+            else
+              rm -f "lib/luau/$header"
+            fi
+          done
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -431,10 +451,11 @@ jobs:
 
           # Commit and Push
           git add -f $BASE_LIB
+          git add lib/luau/VM/include lib/luau/Compiler/include
           
           # Check if there are changes before committing
           if ! git diff --cached --quiet; then
-            git commit -m "Update prebuilt Luau libraries: ${{ needs.check-updates.outputs.latest-commit }}"
+            git commit -m "Update prebuilt Luau libraries and headers: ${{ needs.check-updates.outputs.latest-commit }}"
             git pull --rebase origin main || true
             git push origin HEAD:main
           else
