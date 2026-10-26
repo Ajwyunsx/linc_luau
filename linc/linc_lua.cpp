@@ -181,6 +181,10 @@ namespace linc {
 
     namespace lual {
 
+        int unref(lua_State *L, int t, int ref){
+            return lua_unref(L, ref);
+        }
+
         ::String checklstring(lua_State *l, int numArg, size_t *len){
 
             return ::String(luaL_checklstring(l, numArg, len));

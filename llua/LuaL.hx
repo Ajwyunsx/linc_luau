@@ -78,11 +78,11 @@ extern class LuaL {
     @:native('luaL_checkoption')
     static function checkoption(l:State, narg:Int, def:String, const:Array<String>) : Int;
 
-    @:native('luaL_ref')
+    @:native('lua_ref')
     static function ref(l:State, t:Int) : Int;
 
-    @:native('luaL_unref')
-    static function unref(l:State, t:Int, ref:Int) : Void;
+    @:native('linc::lual::unref')
+    static function unref(l:State, t:Int, ref:Int) : Int;
 
     @:native('luaL_loadfile')
     static function loadfile(l:State, filename:String) : Int;

@@ -51,6 +51,7 @@ namespace linc {
         extern ::String checkstring(lua_State *L, int n);
         extern ::String optstring(lua_State *L, int n, const char *d);
         extern ::String ltypename(lua_State *L, int idx);
+        extern int unref(lua_State *L, int t, int ref);
         extern void error(lua_State *L, const char* fmt);
 
     }
@@ -74,6 +75,4 @@ namespace linc {
 
 } //linc
 
-extern "C" int luaL_ref(lua_State* L, int t);
-extern "C" void luaL_unref(lua_State* L, int t, int ref);
 extern "C" int luaL_loadbuffer(lua_State* L, const char* s, size_t sz, const char* chunkname);
